@@ -365,7 +365,7 @@ __global__ void CopyParticles(Dvc_PomdpState* des,Dvc_PomdpState* src,
 
 		des_i->adaptability = src_i->adaptability;
 
-		des_i->collision_idx = src_i->collision_idx;
+		// des_i->collision_idx = src_i->collision_idx;
 
 		des_i->num_intermediate_goals = src_i->num_intermediate_goals;
 
@@ -921,7 +921,7 @@ DEVICE bool Dvc_WheelchairPomdp::Dvc_Step(Dvc_State& state, float rand_num, int 
 		{
 			// cout << "Contracting path..." << endl;
 			// only contract the path when new points are added to the current path
-			Dvc_ContractAndInterpolatePath(wheelchairpomdp_status, wheelchairpomdp_state.path_traversed, wheelchairpomdp_state.contracted_path, action - Dvc_ModelParams::num_normal_actions, map_quat);
+			Dvc_ContractAndInterpolatePath(wheelchairpomdp_status, wheelchairpomdp_state.path_traversed, wheelchairpomdp_state.contracted_path, action - Dvc_ModelParams::num_normal_actions);
 		}
 		point_along_path = 0;
 		int num2simulate = stop_wheechair ? Dvc_ModelParams::num_simulation_m2g - 1 : Dvc_ModelParams::num_simulation_m2g;
@@ -2373,7 +2373,7 @@ DEVICE void Dvc_WheelchairPomdp::Dvc_Copy_NoAlloc(Dvc_State* des, const Dvc_Stat
 
 	des_i->adaptability = src_i->adaptability;
 
-	des_i->collision_idx = src_i->collision_idx;
+	// des_i->collision_idx = src_i->collision_idx;
 
 	des_i->num_intermediate_goals = src_i->num_intermediate_goals;
 
@@ -2425,7 +2425,7 @@ DEVICE void Dvc_WheelchairPomdp::Dvc_Copy_ToShared(Dvc_State* des, const Dvc_Sta
 	}
 	des_i->adaptability = src_i->adaptability;
 
-	des_i->collision_idx = src_i->collision_idx;
+	// des_i->collision_idx = src_i->collision_idx;
 
 	des_i->num_intermediate_goals = src_i->num_intermediate_goals;
 
@@ -2698,7 +2698,7 @@ DEVICE float Dvc_WheelchairPomdp::Dvc_TransitWheelchair(Dvc_PomdpState& wheelcha
 	}
 
 	// finish 2 phases
-	wheelchair_state.collision_idx = highest_penalty;
+	// wheelchair_state.collision_idx = highest_penalty;
 
 	wheelchair_state.wheelchair.vel_v = v_after;
 	wheelchair_state.wheelchair.vel_w = w_after;
@@ -3095,7 +3095,7 @@ DEVICE void Dvc_WheelchairPomdp::Dvc_GenerateNewPath(Dvc_WheelchairStruct &wheel
 }
 
 //Assuming it wil happen only once. The original path is takem from intermediate_goal_list
-DEVICE void Dvc_WheelchairPomdp::Dvc_ContractAndInterpolatePath(Dvc_WheelchairStruct &wheelchair_status, Dvc_PathStruct &path_traversed, Dvc_PathStruct &new_path, int path_index, Eigen::Quaternionf& map_quat)
+DEVICE void Dvc_WheelchairPomdp::Dvc_ContractAndInterpolatePath(Dvc_WheelchairStruct &wheelchair_status, Dvc_PathStruct &path_traversed, Dvc_PathStruct &new_path, int path_index)
 {
 
 	Dvc_3DCOORD current_position;
@@ -3154,14 +3154,16 @@ DEVICE void Dvc_WheelchairPomdp::Dvc_ContractAndInterpolatePath(Dvc_WheelchairSt
 					temp_path.size = temp_path.size + 1;
 				}
 
-				Eigen::Vector3f check_vector(moving_point.x, moving_point.y, 0);
-				check_vector = map_quat.matrix()* check_vector;
+				// Eigen::Vector3f check_vector(moving_point.x, moving_point.y, 0);
+				// check_vector = map_quat.matrix()* check_vector;
 
-				float x_check = check_vector[0];
-				float y_check = check_vector[1];
+				// float x_check = check_vector[0];
+				// float y_check = check_vector[1];
+				int row_check = static_cast<int>(- moving_point.x / ModelParams::map_resolution);
+            	int col_check = static_cast<int>(- moving_point.y / ModelParams::map_resolution);
 
-				int col_check = x_check >= 0 ? ceilf(x_check / map_resolution) : floorf(x_check / map_resolution);
-				int row_check = y_check >= 0 ? ceilf(y_check / map_resolution) : floorf(y_check / map_resolution);
+				// int col_check = x_check >= 0 ? ceilf(x_check / map_resolution) : floorf(x_check / map_resolution);
+				// int row_check = y_check >= 0 ? ceilf(y_check / map_resolution) : floorf(y_check / map_resolution);
 
 				// cout << "x_check in costmap frame: " << x_check << endl;
 				// cout << "y_check in costmap frame: " << y_check << endl;

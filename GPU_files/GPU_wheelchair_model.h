@@ -10,7 +10,7 @@
 #include "wheelchair_pomdp/wheelchair_model.h"
 #include "GPU_Path.h"
 
-#include <Eigen/Geometry>
+#include <eigen3/Eigen/Geometry>
 using namespace despot;
 
 /* =============================================================================
@@ -129,7 +129,7 @@ public:
 	bool adaptability;
 	// geometry_msgs::Point state_goal_point;
 	// int state_goal_index;
-	float collision_idx;
+	// float collision_idx;
 
 	// number of intermediate goals reached
 	int num_intermediate_goals;
@@ -173,7 +173,7 @@ public:
 
 			adaptability = other.adaptability;
 
-			collision_idx = other.collision_idx;
+			// collision_idx = other.collision_idx;
 
 			num_intermediate_goals = other.num_intermediate_goals;
 			
@@ -270,7 +270,7 @@ public:
 	DEVICE static int Dvc_TurningSteps(float& angle2turn, float& current_w, int& case_num) ;
 
 	// path contraction
-	DEVICE static void Dvc_ContractAndInterpolatePath(Dvc_WheelchairStruct &wheelchair_status, Dvc_PathStruct &path_traversed, Dvc_PathStruct &new_path, int path_index, Eigen::Quaternionf& map_quat);
+	DEVICE static void Dvc_ContractAndInterpolatePath(Dvc_WheelchairStruct &wheelchair_status, Dvc_PathStruct &path_traversed, Dvc_PathStruct &new_path, int path_index);
 
 	/* Shared control reward */
 	DEVICE static float Dvc_FollowUserReward(float v_follow, float w_follow, float v_after, float w_after) ;
@@ -306,8 +306,8 @@ DEVICE extern Dvc_COORD* goal_positions;
 DEVICE extern Dvc_Path* intermediate_goal_list;
 DEVICE extern float external_joy_x;
 DEVICE extern float external_joy_y;
-DEVICE extern float agent2map_yaw;
-DEVICE extern float map_resolution;
+// DEVICE extern float agent2map_yaw;
+// DEVICE extern float map_resolution;
 DEVICE extern int* local_costmap_data;
 DEVICE extern int local_costmap_rows;
 DEVICE extern int local_costmap_cols;

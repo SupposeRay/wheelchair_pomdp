@@ -80,27 +80,30 @@ namespace ModelParams {
 
 	// external world setting
 	const float transition_time = 0.6;					// the rollout time per step, must be a multiple of planning_time
-	const float max_v_acceleration = 2.0;				// the maximum linear acceleration limited by motors
-	const float max_w_acceleration = 2.0;				// the maximum angular acceleration limited by motors
-	const float std_v_acceleration = 1.0;				// the standard linear acceleration for normal actions
-	const float std_w_acceleration = 1.0;				// the standard angular acceleration for normal actions
+	const float max_v_acceleration = 0.5;				// the maximum linear acceleration limited by motors
+	const float max_w_acceleration = 0.5;				// the maximum angular acceleration limited by motors
+	const float std_v_acceleration = 0.5;				// the standard linear acceleration for normal actions
+	const float std_w_acceleration = 0.5;				// the standard angular acceleration for normal actions
 	const float weight_heading = 0.8;					// the weightings of heading in DWA cost function
 	const float	weight_velocity = 0.2;					// the weightings of velocity in DWA cost function
-	const float waypoint_dist = 2.0;					// the distance between the agent and the waypoint
+	const float waypoint_dist = 1.0;					// the distance between the agent and the waypoint
 	// const float inner_radius = 0.32;						// the inflation radius inside which a collision is considered to happen
 	const float inner_radius = 0.45;
 	// const float outer_radius = 0.35;					// the inflation radius inside which a penalty starts to be inflicted
-	const float outer_radius = 0.55;
+	const float outer_radius = 0.5;
+	const float map_resolution = 0.05;					// the costmap resolution, namely the physical size of a single pixel
+	const int costmap_rows = 200;
+	const int costmap_cols = 200;						// size of the costmap
 	const float blur_radius = 0.1;
 	const float dilation_radius = 0.2;					// the bufferzone for collision
-	const float collision_pixel = 75;					// the pixel value higher than which a collision is considered to happen
-	const float outer_pixel_thres = 75;					// the pixel value higher than which a collision is considered to happen
-	const float inner_pixel_thres = 74;					// the pixel value higher than which a collision during rollout is considered to happen
-	const float pixel_path = 73.0;						// the max pixel value on a costmap, where a collision is surely confirmed
+	const float collision_pixel = 128;					// the pixel value higher than which a collision is considered to happen
+	const float outer_pixel_thres = 128;					// the pixel value higher than which a collision is considered to happen
+	const float inner_pixel_thres = 128;					// the pixel value higher than which a collision during rollout is considered to happen
+	const float pixel_path = 128;						// the max pixel value on a costmap, where a collision is surely confirmed
 	const float repsonse_time = 0.2;					// the response time for the real wheelchair
-	const float back2base_dist = 0.4;					// the distance between base_link and rear part of the wheelchair
+	const float base2front_dist = 0.63;					// the distance between base_link and front part of the wheelchair
 	const float update_interval = 0.1;					// the update interval for the timer
-	const float publish_interval = 0.01;				// the velocity publish interval for the timer
+	const float publish_interval = 0.1;				// the velocity publish interval for the timer
 	const float inflation_width = 1.0;					// the inflation width around the wheelchair for dynmaic rectangle
 	
 	// POMDP model setting
@@ -115,12 +118,12 @@ namespace ModelParams {
 	const float noise_amplitude = 0.04;					// the noise amplitude when introducing noise
 	const float exp_temperature = 0.3;					// the rate of updating path probabilities in MaxEnt IOC
 	const float backing_ratio = 1.0;					// the proportion of max backing speed to max speed
-	const float max_linear_speed = 1.0;					// the max linear speed limit, acutal max linear speed is controlled by the joystick input
-	const float max_angular_speed = 1.0;				// the max angular speed
+	const float max_linear_speed = 0.5;					// the max linear speed limit, acutal max linear speed is controlled by the joystick input
+	const float max_angular_speed = 0.5;				// the max angular speed
 	const int num_points_direction = 3;					// the first several points along a specific path to define the direction of that path
 	const float angle_receding = M_PI / 6;				// the max angle between heading and path direction beyond which a receding penalty is inflicted
 	const float step_size = 0.2;						// the number added/subtracted from the current velocities when applying an action
-	const float step_scale = 0.8;						// the proportion of step_size while the wheelchair is inside the collision zone
+	const float step_scale = 1.0;						// the proportion of step_size while the wheelchair is inside the collision zone
 	const float facing_angle = 0.1;						// the angle threshold under which the wheelchair is considered facing the path
     const bool use_dwa_actions = true;
 	const int num_dwa_actions = 2;
@@ -130,7 +133,7 @@ namespace ModelParams {
 	const int excess_speed_penalty = -100;				// the penalty for exceeding max speed
 	const int step_penalty = -1;						// the penalty for every step
 	const int stationary_penalty = -10;					// the penalty for not moving when joystick input is non-zero
-	const int user_following_reward = 50; 				// the max reward for following joystick input
+	const int user_following_reward = 100; 				// the max reward for following joystick input
 	const int collision_penalty = -5000;				// the penalty for a severe collision
 	const int inflation_basic_penalty = -10;			// the basic penalty for entering the inflation zone
 	const int inflation_high_penalty = -50;				// the penalty increment for approaching the inflation zone

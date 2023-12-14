@@ -8,6 +8,7 @@
 #include <ros/ros.h>
 
 // #include <chrono>
+#include <mutex>
 
 // actionlib
 #include <actionlib/client/simple_action_client.h>
@@ -43,7 +44,7 @@
 #include <voronoi_msgs_and_types/PathList.h>
 // #include "wheelchair_dmp.h"
 
-// #include "wheelchair_pomdp/plot_scan.hpp"
+// #include "plot_scan.hpp"
 
 using namespace despot;
 
@@ -51,12 +52,12 @@ class GazeboWheelchairWorld: public World
 {
 public:
     ros::NodeHandlePtr node_handle_;
-    // ros::Subscriber scan_subscriber_;
+    ros::Subscriber scan_subscriber_;
     ros::Subscriber path_subscriber_;
     ros::Subscriber odom_subscriber_;
     ros::Subscriber joystick_subscriber_;
     ros::Subscriber goal_subscriber_;
-    ros::Subscriber map_subscriber_;
+    // ros::Subscriber map_subscriber_;
     ros::Subscriber bdwa_subscriber_;
     ros::Subscriber pdwa_subscriber_;
     ros::Subscriber weight_subscriber_;
@@ -102,6 +103,8 @@ public:
 
     geometry_msgs::TransformStamped lidar2baseTransform;
 
+    std::mutex thread_mutex;
+
     float tf_buffer_timeout = 0.3;
 
     // float waypoint_dist = 2.0;
@@ -123,7 +126,7 @@ public:
     // sensor_msgs::LaserScanConstPtr scan_pointer;
     // std::vector<geometry_msgs::Point> lidar_points;
     
-    // bool scan_receive = false;
+    bool scan_receive = false;
     // joystick info
     geometry_msgs::Point joystick_input;
     bool joystick_receive = false;
@@ -134,7 +137,7 @@ public:
     bool inside_collision = false;
 
     // pixel values of the base link and back_link
-    int base_pixel = 0, back_pixel = 0;
+    int base_pixel = 0, front_pixel = 0;
 
     // current velocity info
     geometry_msgs::Twist current_vel;
@@ -157,6 +160,8 @@ public:
 
     // the intermediate goals in local frame
     voronoi_msgs_and_types::PathList in_intermediate_goals;
+
+    voronoi_msgs_and_types::PathList temp_intermediate_goals;
 
     // vector of waypoints, vector size same as number of paths
 	std::vector<geometry_msgs::PoseStamped> goal_positions;
@@ -185,6 +190,12 @@ public:
     // if the short instant joystick input is inside collision zone
     bool projected_cmd_collision = false;
 
+    bool reach_destination = false;
+
+    bool stop_wheelchair = false;
+
+    int stop_count = 0;
+
     int stuck_count = 0;
     
     // most likely path index
@@ -201,11 +212,14 @@ public:
     geometry_msgs::Pose final_goal;
 
     // image to store the local costmap
+    // plot_scan::PlotScan* plot_ptr;
     cv::Mat local_costmap;
-    bool costmap_receive = false;
-    float map_resolution;
+    cv::Mat temp_costmap;
+    float max_lidar_range = 0;
+    // bool costmap_receive = false;
+    // float map_resolution;
     // current agent pose
-    geometry_msgs::Pose map_pose;
+    // geometry_msgs::Pose map_pose;
 
     // frame_ids
     std::string base_frame_id = "base_link", path_frame_id = "map", odom_frame_id = "odom";
@@ -218,10 +232,10 @@ public:
     float rotate_rect_length = 0, rotate_rect_width = 0, rect_center_x = 0, rect_center_y = 0;
 
     // the quaternion to represent the rotation of the costmap with respect to the wheelchair local frame
-	tf2::Quaternion map_quaternion;
+	// tf2::Quaternion map_quaternion;
 
     // the yaw between wheelchair heading and the costmap pose
-	float agent2map_yaw = 0;
+	// float agent2map_yaw = 0;
 
     // center cell
 	int x_center = 0, y_center = 0;
@@ -243,9 +257,10 @@ public:
 
     // user's instantaneous desired path
 	nav_msgs::Path user_path;
+    nav_msgs::Path temp_user_path;
 
     // callback for lidar scan data
-    // void scanCallback(const sensor_msgs::LaserScan::ConstPtr &msg_scan);
+    void scanCallback(const sensor_msgs::LaserScan::ConstPtr &msg_scan);
 
     // // callback for odometry
     void odomCallback(const nav_msgs::Odometry::ConstPtr &msg_odom);
@@ -257,7 +272,7 @@ public:
     void pathCallback(const voronoi_msgs_and_types::PathList &msg_path);
 
     // callback for the local costmap
-    void mapCallback(const nav_msgs::OccupancyGrid::ConstPtr &msg_map);
+    // void mapCallback(const nav_msgs::OccupancyGrid::ConstPtr &msg_map);
 
     // callback for pure DWA
     void pdwaCallback(const geometry_msgs::Twist::ConstPtr &msg_pdwa);

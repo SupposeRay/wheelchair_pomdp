@@ -261,11 +261,11 @@ public:
 	// the current local costmap obtained from the external world, a matrix, data type uint8_t, used in CollisionCheck (called in Step)
 	cv::Mat local_costmap;
 	// map resolution [m/cell]
-	float map_resolution;
+	// float map_resolution;
 	// center cell
 	int x_center = 0, y_center = 0;
 	// the yaw between wheelchair heading and the costmap pose
-	float agent2map_yaw = 0;
+	// float agent2map_yaw = 0;
 
 	// store observation in hashvalue
 	std::hash<std::string> obsHash;
@@ -301,7 +301,7 @@ public:
 	mutable bool re_sort = false;
 
 	// the quaternion to represent the rotation of the costmap with respect to the wheelchair local frame
-	mutable tf2::Quaternion map_quaternion;
+	// mutable tf2::Quaternion map_quaternion;
 
 	// the joystick length during the search
 	mutable float initial_joystick_length = 0;
@@ -354,9 +354,9 @@ public:
 	void PrintAction(ACT_TYPE action, std::ostream& out = std::cout) const;
 
 	/* Collision check */
-	float CollisionCheck(const WheelchairStruct& wheelchair_status, const tf2::Quaternion& map_quat) const;
+	float CollisionCheck(const WheelchairStruct& wheelchair_status) const;
 
-	float M2G_CollisionCheck(const WheelchairStruct& wheelchair_status, const tf2::Quaternion& map_quat, const float& angle2turn) const;
+	float M2G_CollisionCheck(const WheelchairStruct& wheelchair_status, const float& angle2turn) const;
 
 	/* Reaching check */
 	float ReachingCheck(WheelchairState& wheelchair_state, bool& reaching_goal) const;
@@ -368,15 +368,15 @@ public:
 	int RecedingPenalty(WheelchairState& wheelchair_state, tf2::Vector3& agent_heading) const;
 
 	/* Shared control reward */
-	float FollowUserReward(tf2::Vector3& follow_heading, float& v_after, float& w_after, float& follow_cost) const;
+	float FollowUserReward(tf2::Vector3& follow_heading, float& v_after, float& w_after, float& follow_cost, int& action_depth) const;
 
 	float M2G_FollowUserReward(tf2::Vector3& joystick_heading, tf2::Vector3& final_heading) const;
 
 	/* Transition function */
-	float TransitWheelchair(WheelchairState& wheelchair_state, tf2::Quaternion& map_quat, int& transition_steps, float v_before, float v_after, float w_before, float w_after) const;
+	float TransitWheelchair(WheelchairState& wheelchair_state, int& transition_steps, float v_before, float v_after, float w_before, float w_after) const;
 
 	/* Transition function for Update */
-	bool TransitParticles(WheelchairState& wheelchair_state, tf2::Quaternion& map_quat, float v_before, float v_after, float w_before, float w_after) const;
+	bool TransitParticles(WheelchairState& wheelchair_state, float v_before, float v_after, float w_before, float w_after) const;
 
 	/* Angle between wheelchair heading and direction to the goal */
 	double CalAngleDiff(WheelchairStruct &wheelchair_status, tf2::Vector3& agent_heading, int &goal_idx, int point_idx = -1) const;
@@ -395,12 +395,12 @@ public:
 	void normalize(std::vector<float>& belief_vector) const;
 
 	// path contraction
-	void ContractAndInterpolatePath(WheelchairStruct &wheelchair_status, nav_msgs::Path &path_traversed, nav_msgs::Path &original_path, tf2::Quaternion& map_quat) const;
+	void ContractAndInterpolatePath(WheelchairStruct &wheelchair_status, nav_msgs::Path &path_traversed, nav_msgs::Path &original_path) const;
 
 	// path interpolation
 	void GenerateNewPath(WheelchairStruct &wheelchair_status, nav_msgs::Path &original_path) const;
 
-	int TurningSteps(float& angle2turn, float& current_w, float& angular_vel) const;
+	int TurningSteps(float& angle2turn, float& current_w, float& angular_vel, float time_span) const;
 
 	float FollowingVel(tf2::Vector3 joystick_heading, float v_before, float w_before, float& v_follow, float& w_follow, float v_max, float time_span) const;
 

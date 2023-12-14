@@ -442,12 +442,12 @@ __global__ void UpdateExternalJoystickKernel(float _external_joy_x, float _exter
 	external_joy_y = _external_joy_y;
 }
 
-__global__ void UpdateLocalCostmapKernel(int* tempLocalCostMap, int _local_costmap_rows, int _local_costmap_cols, float _map_resolution)
+__global__ void UpdateLocalCostmapKernel(int* tempLocalCostMap, int _local_costmap_rows, int _local_costmap_cols)
 {
 	local_costmap_cols = _local_costmap_cols;
 	local_costmap_rows = _local_costmap_rows;
 	local_costmap_data = tempLocalCostMap;
-	map_resolution = _map_resolution;
+	// map_resolution = _map_resolution;
 	x_center = local_costmap_cols % 2 == 0 ? (local_costmap_cols / 2) - 1 : (local_costmap_cols - 1) / 2;
     y_center = local_costmap_rows % 2 == 0 ? (local_costmap_rows / 2) - 1 : (local_costmap_rows - 1) / 2;
 
@@ -457,8 +457,8 @@ __global__ void UpdateLocalCostmapKernel(int* tempLocalCostMap, int _local_costm
 
 __global__ void UpdateAfterExecuteAction(Dvc_3DCOORD* _lidar_points, int _lidar_points_size,
 Dvc_COORD* _goal_positions, Dvc_Path* _temp_intermediate_goal_list, int _num_path_size,
-float _external_joy_x, float _external_joy_y, float _agent2map_yaw,
-int* _tempLocalCostMap, int _local_costmap_rows, int _local_costmap_cols, float _map_resolution)
+float _external_joy_x, float _external_joy_y,
+int* _tempLocalCostMap, int _local_costmap_rows, int _local_costmap_cols)
 {
 	Dvc_ModelParams::LIDAR_POINTS_SIZE = _lidar_points_size;
 	lidar_points=_lidar_points;
@@ -470,12 +470,12 @@ int* _tempLocalCostMap, int _local_costmap_rows, int _local_costmap_cols, float 
 	external_joy_x = _external_joy_x;
 	external_joy_y = _external_joy_y;
 
-	agent2map_yaw = _agent2map_yaw;
+	// agent2map_yaw = _agent2map_yaw;
 
 	local_costmap_cols = _local_costmap_cols;
 	local_costmap_rows = _local_costmap_rows;
 	local_costmap_data = _tempLocalCostMap;
-	map_resolution = _map_resolution;
+	// map_resolution = _map_resolution;
 
 	x_center = local_costmap_cols % 2 == 0 ? (local_costmap_cols / 2) - 1 : (local_costmap_cols - 1) / 2;
     y_center = local_costmap_rows % 2 == 0 ? (local_costmap_rows / 2) - 1 : (local_costmap_rows - 1) / 2;
@@ -633,14 +633,14 @@ void UpdateGPUAfterExcecuteAction(DSPOMDP* Hst_model)
 			for(int i=0;i<local_costmap_size;i++){
 				tempLocalCostMap[i] = local_costmap_data_[i];
 			}
-			UpdateLocalCostmapKernel<<<1,1,1>>>(tempLocalCostMap, local_costmap_rows, local_costmap_cols, Hst->map_resolution);
+			UpdateLocalCostmapKernel<<<1,1,1>>>(tempLocalCostMap, local_costmap_rows, local_costmap_cols);
 
 		}
 		
 		
 		UpdateAfterExecuteAction<<<1,1,1>>>(tempLidarPoints, Hst->lidar_points.size(), tempGoalPositions, tempIntermediateGoalList, 
-		goal_positions_size, Hst->external_joy_x, Hst->external_joy_y, Hst->agent2map_yaw, 
-		tempLocalCostMap, local_costmap_rows, local_costmap_cols, Hst->map_resolution);
+		goal_positions_size, Hst->external_joy_x, Hst->external_joy_y, 
+		tempLocalCostMap, local_costmap_rows, local_costmap_cols);
 		HANDLE_ERROR(cudaDeviceSynchronize());
 	}
 }
@@ -767,7 +767,7 @@ void UpdateGPULocalCostmap(DSPOMDP* Hst_model)
 			for(int i=0;i<local_costmap_size;i++){
 				tempLocalCostMap[i] = local_costmap_data_[i];
 			}
-			UpdateLocalCostmapKernel<<<1,1,1>>>(tempLocalCostMap, local_costmap_rows, local_costmap_cols, Hst->map_resolution);
+			UpdateLocalCostmapKernel<<<1,1,1>>>(tempLocalCostMap, local_costmap_rows, local_costmap_cols);
 			HANDLE_ERROR(cudaDeviceSynchronize());
 		}
 	}

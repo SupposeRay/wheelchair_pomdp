@@ -182,7 +182,7 @@ void WheelchairParticleBelief::Update(ACT_TYPE action, OBS_TYPE obs)
 	// }
 
 	// Call the transition function to update the first particle
-	wheelchair_model_->TransitParticles(*wheelchair_particle_1, wheelchair_model_->map_quaternion,
+	wheelchair_model_->TransitParticles(*wheelchair_particle_1,
 		wheelchair_particle_1->wheelchair.agent_velocity.linear.x,
 		wheelchair_model_->v_execution,
 		wheelchair_particle_1->wheelchair.agent_velocity.angular.z,
@@ -400,6 +400,7 @@ WheelchairDSPOMDP::WheelchairDSPOMDP()
 	current_wheelchair_status.agent_velocity.angular.z = 0;
 	goal_positions.reserve(ModelParams::num_paths);
 	intermediate_goal_list.paths.reserve(ModelParams::num_paths);
+	local_costmap.create(ModelParams::costmap_rows, ModelParams::costmap_cols, CV_8UC1);
 	// pre_positions.clear();
 }
 
@@ -692,7 +693,7 @@ bool WheelchairDSPOMDP::Step(State& state, double rand_num, ACT_TYPE action, dou
 		{
 			// cout << "Contracting path..." << endl;
 			// only contract the path when new points are added to the current path
-			ContractAndInterpolatePath(wheelchair_status, wheelchair_state.path_traversed, wheelchair_path.paths[action - total_normal_actions], map_quaternion);
+			ContractAndInterpolatePath(wheelchair_status, wheelchair_state.path_traversed, wheelchair_path.paths[action - total_normal_actions]);
 		}
 
 		// cout << "Goal " << action - total_normal_actions + 1 << ", position x = "
@@ -885,7 +886,7 @@ bool WheelchairDSPOMDP::Step(State& state, double rand_num, ACT_TYPE action, dou
 
 					// yaw_M2G = wheelchair_status.agent_pose_angle;
 
-					collision_reward = TransitWheelchair(wheelchair_state, map_quaternion, transition_steps, v_before, v_after, w_before, w_after);
+					collision_reward = TransitWheelchair(wheelchair_state, transition_steps, v_before, v_after, w_before, w_after);
 
 					// yaw_M2G = yaw_M2G - wheelchair_status.agent_pose_angle;
 					// quat_M2G.setRPY(0, 0, yaw_M2G);
@@ -1155,7 +1156,7 @@ bool WheelchairDSPOMDP::Step(State& state, double rand_num, ACT_TYPE action, dou
 
 					// yaw_M2G = wheelchair_status.agent_pose_angle;
 
-					collision_reward = TransitWheelchair(wheelchair_state, map_quaternion, transition_steps, v_before, v_after, w_before, w_after);
+					collision_reward = TransitWheelchair(wheelchair_state, transition_steps, v_before, v_after, w_before, w_after);
 
 					// yaw_M2G = yaw_M2G - wheelchair_status.agent_pose_angle;
 					// quat_M2G.setRPY(0, 0, yaw_M2G);
@@ -1242,7 +1243,7 @@ bool WheelchairDSPOMDP::Step(State& state, double rand_num, ACT_TYPE action, dou
 
 					float angular_vel = 0;
 
-					int steps2turn = TurningSteps(angle2turn, w_before, angular_vel);
+					int steps2turn = TurningSteps(angle2turn, w_before, angular_vel, ModelParams::transition_time);
 					// cout << "steps2turn = " << steps2turn << endl;
 
 					total_steps2turn += steps2turn;
@@ -1430,11 +1431,9 @@ bool WheelchairDSPOMDP::Step(State& state, double rand_num, ACT_TYPE action, dou
 	// cout << "normal v_follow = " << v_follow << ", w_follow = " << w_follow << endl;
 
 	// cout << "follow_cost = " << follow_cost << endl;
-	float transition_reward = TransitWheelchair(wheelchair_state, map_quaternion, transition_steps, v_before, v_after, w_before, w_after);
+	float transition_reward = TransitWheelchair(wheelchair_state, transition_steps, v_before, v_after, w_before, w_after);
 	reward += transition_reward;
 
-	wheelchair_state.action_length++;
-	wheelchair_state.action_before = action;
 	// cout << "After changing atcion.." << endl;
 	// cout << "wheelchair_state.action_length = " << wheelchair_state.action_length << ", wheelchair_state.action_before = " << wheelchair_state.action_before << endl;
 
@@ -1473,9 +1472,12 @@ bool WheelchairDSPOMDP::Step(State& state, double rand_num, ACT_TYPE action, dou
 		}
 		else
 		{
-			reward += FollowUserReward(follow_heading, v_after, w_after, follow_cost) * powf(ModelParams::reward_discount, transition_steps - 1);
+			reward += FollowUserReward(follow_heading, v_after, w_after, follow_cost, wheelchair_state.action_length) * powf(ModelParams::reward_discount, transition_steps - 1);
 		}
 	}
+
+	wheelchair_state.action_length++;
+	wheelchair_state.action_before = action;
 	/* THE SHARED CONTROL PART */
 
 	// if (!wheelchair_state.adaptability)	// not adapt to the robot
@@ -1789,6 +1791,28 @@ bool WheelchairDSPOMDP::Step(State& state, double rand_num, ACT_TYPE action, dou
 		int direction_index = round(angle_diff * 8 / M_PI);
 		direction_index = direction_index == 16 ? 0 : direction_index;
 		wheelchair_obs.joystick_obs = direction_index;
+
+		// if (rand_num < 0.7)
+		// {
+		// 	wheelchair_obs.joystick_obs = direction_index;
+		// }
+		// else if (rand_num < 0.85)
+		// {
+		// 	wheelchair_obs.joystick_obs = direction_index - 1;
+		// }
+		// else
+		// {
+		// 	wheelchair_obs.joystick_obs = direction_index + 1;
+		// }
+
+		// if (wheelchair_obs.joystick_obs > 15)
+		// {
+		// 	wheelchair_obs.joystick_obs -= 16;
+		// }
+		// else if (wheelchair_obs.joystick_obs < 0)
+		// {
+		// 	wheelchair_obs.joystick_obs += 16;
+		// }
 	}
 	// Updates hashmap:
 	// takes hash value as key and stores wheelchair_obs as value in map
@@ -2713,7 +2737,7 @@ void WheelchairDSPOMDP::PrintAction(ACT_TYPE action, ostream& out) const
 	}
 }
 
-float WheelchairDSPOMDP::CollisionCheck(const WheelchairStruct& wheelchair_status, const tf2::Quaternion& map_quat) const
+float WheelchairDSPOMDP::CollisionCheck(const WheelchairStruct& wheelchair_status) const
 {
 	// cout << "Collision checking..." << endl;
 	float x_base = wheelchair_status.agent_pose.position.x;
@@ -2724,15 +2748,15 @@ float WheelchairDSPOMDP::CollisionCheck(const WheelchairStruct& wheelchair_statu
 	// add an extra check point behind the wheelchair to solve the issue that base_link is not at the center of the wheelchair
 	tf2::Quaternion wheelchair_quat;
 	tf2::convert(wheelchair_status.agent_pose.orientation, wheelchair_quat);
-	tf2::Vector3 back2base(ModelParams::back2base_dist, 0, 0);
+	tf2::Vector3 base2front(ModelParams::base2front_dist, 0, 0);
 	// cout << "back2base x = " << back2base.getX() << ", y = " << back2base.getY() << endl;
 
-	back2base = tf2::quatRotate(wheelchair_quat, back2base);
+	base2front = tf2::quatRotate(wheelchair_quat, base2front);
 
 	// cout << "After rotation, back2base x = " << back2base.getX() << ", y = " << back2base.getY() << endl;
 
-	float x_back = x_base - back2base.getX();
-	float y_back = y_base - back2base.getY();
+	float x_front = x_base + base2front.getX();
+	float y_front = y_base + base2front.getY();
 
 	// cout << "x_back = " << x_back << ", y_back = " << y_back << endl;
 
@@ -2749,17 +2773,17 @@ float WheelchairDSPOMDP::CollisionCheck(const WheelchairStruct& wheelchair_statu
 	// cout << "agent2map_yaw: " << agent2map_yaw * 180 / M_PI << endl;
 	// cout << "map_quat x = " << map_quat.getX() << ", y = " << map_quat.getY() << ", z = " << map_quat.getZ() << ", w = " << map_quat.getW() << endl;
 
-    tf2::Vector3 check_vector_base(x_base, y_base, 0);
-	tf2::Vector3 check_vector_back(x_back, y_back, 0);
-	check_vector_base = tf2::quatRotate(map_quat, check_vector_base);
-	check_vector_back = tf2::quatRotate(map_quat, check_vector_back);
+    // tf2::Vector3 check_vector_base(x_base, y_base, 0);
+	// tf2::Vector3 check_vector_front(x_front, y_front, 0);
+	// check_vector_base = tf2::quatRotate(map_quat, check_vector_base);
+	// check_vector_front = tf2::quatRotate(map_quat, check_vector_front);
     // check_vector = rotation_matrix * check_vector;
 
-	x_base = check_vector_base.getX();
-    y_base = check_vector_base.getY();
+	// x_base = check_vector_base.getX();
+    // y_base = check_vector_base.getY();
 
-	x_back = check_vector_back.getX();
-    y_back = check_vector_back.getY();
+	// x_front = check_vector_front.getX();
+    // y_front = check_vector_front.getY();
 
 	// cout << "x_base in costmap frame: " << x_base << endl;
 	// cout << "y_base in costmap frame: " << y_base << endl;
@@ -2767,11 +2791,11 @@ float WheelchairDSPOMDP::CollisionCheck(const WheelchairStruct& wheelchair_statu
 	// cout << "x_back in costmap frame: " << x_back << endl;
 	// cout << "y_back in costmap frame: " << y_back << endl;
 
-	int col_base = x_base >= 0 ? ceil(x_base / map_resolution) : floor(x_base / map_resolution);
-	int row_base = y_base >= 0 ? ceil(y_base / map_resolution) : floor(y_base / map_resolution);
+	int row_base = static_cast<int>(- x_base / ModelParams::map_resolution);
+	int col_base = static_cast<int>(- y_base / ModelParams::map_resolution);
 
-	int col_back = x_back >= 0 ? ceil(x_back / map_resolution) : floor(x_back / map_resolution);
-	int row_back = y_back >= 0 ? ceil(y_back / map_resolution) : floor(y_back / map_resolution);
+	int row_front = static_cast<int>(- x_front / ModelParams::map_resolution);
+	int col_front = static_cast<int>(- y_front / ModelParams::map_resolution);
 
 	// cout << "col_base: " << col_base << endl;
 	// cout << "row_base: " << row_base << endl;
@@ -2780,7 +2804,7 @@ float WheelchairDSPOMDP::CollisionCheck(const WheelchairStruct& wheelchair_statu
 	// cout << "row_back: " << row_back << endl;
 
 	int base_pixel = local_costmap.at<uint8_t>(y_center + row_base, x_center + col_base);
-	int back_pixel = local_costmap.at<uint8_t>(y_center + row_back, x_center + col_back);
+	int back_pixel = local_costmap.at<uint8_t>(y_center + row_front, x_center + col_front);
 
 	// cout << "base_pixel = " << base_pixel << ", back_pixel = " << back_pixel << endl;
 
@@ -2788,28 +2812,32 @@ float WheelchairDSPOMDP::CollisionCheck(const WheelchairStruct& wheelchair_statu
 	{
 		return 1;
 	}
-	else if (base_pixel < ModelParams::inner_pixel_thres && back_pixel < ModelParams::inner_pixel_thres)
+	else
 	{
 		return 0;
 	}
-	else
-	{
-		if (base_pixel < ModelParams::inner_pixel_thres)
-		{
-			return 0.5 * (static_cast<float>(back_pixel) - ModelParams::inner_pixel_thres) / (ModelParams::outer_pixel_thres - ModelParams::inner_pixel_thres);
-		}
-		else if (back_pixel < ModelParams::inner_pixel_thres)
-		{
-			return 0.5 * (static_cast<float>(base_pixel) - ModelParams::inner_pixel_thres) / (ModelParams::outer_pixel_thres - ModelParams::inner_pixel_thres);
-		}
-		else
-		{
-			float double_collision = 0;
-			double_collision = (static_cast<float>(base_pixel) - ModelParams::inner_pixel_thres) / (ModelParams::outer_pixel_thres - ModelParams::inner_pixel_thres);
-			double_collision += (static_cast<float>(back_pixel) - ModelParams::inner_pixel_thres) / (ModelParams::outer_pixel_thres - ModelParams::inner_pixel_thres);
-			return 0.5 * double_collision;
-		}
-	}
+	// else if (base_pixel < ModelParams::inner_pixel_thres && back_pixel < ModelParams::inner_pixel_thres)
+	// {
+	// 	return 0;
+	// }
+	// else
+	// {
+	// 	if (base_pixel < ModelParams::inner_pixel_thres)
+	// 	{
+	// 		return 0.5 * (static_cast<float>(back_pixel) - ModelParams::inner_pixel_thres) / (ModelParams::outer_pixel_thres - ModelParams::inner_pixel_thres);
+	// 	}
+	// 	else if (back_pixel < ModelParams::inner_pixel_thres)
+	// 	{
+	// 		return 0.5 * (static_cast<float>(base_pixel) - ModelParams::inner_pixel_thres) / (ModelParams::outer_pixel_thres - ModelParams::inner_pixel_thres);
+	// 	}
+	// 	else
+	// 	{
+	// 		float double_collision = 0;
+	// 		double_collision = (static_cast<float>(base_pixel) - ModelParams::inner_pixel_thres) / (ModelParams::outer_pixel_thres - ModelParams::inner_pixel_thres);
+	// 		double_collision += (static_cast<float>(back_pixel) - ModelParams::inner_pixel_thres) / (ModelParams::outer_pixel_thres - ModelParams::inner_pixel_thres);
+	// 		return 0.5 * double_collision;
+	// 	}
+	// }
 	// float x_check = wheelchair_status.agent_pose.position.x;
 	// float y_check = wheelchair_status.agent_pose.position.y;
 	// float r_collision = ModelParams::inner_radius;
@@ -2850,7 +2878,7 @@ float WheelchairDSPOMDP::CollisionCheck(const WheelchairStruct& wheelchair_statu
 	// return penalty_idx;
 }
 
-float WheelchairDSPOMDP::M2G_CollisionCheck(const WheelchairStruct& wheelchair_status, const tf2::Quaternion& map_quat, const float& angle2turn) const
+float WheelchairDSPOMDP::M2G_CollisionCheck(const WheelchairStruct& wheelchair_status, const float& angle2turn) const
 {
 	// cout << "Move to goal collision checking..." << endl;
 	int collision_count = 0;
@@ -2862,27 +2890,27 @@ float WheelchairDSPOMDP::M2G_CollisionCheck(const WheelchairStruct& wheelchair_s
 
 	tf2::Quaternion wheelchair_quat;
 	tf2::convert(wheelchair_status.agent_pose.orientation, wheelchair_quat);
-	tf2::Vector3 back2base(ModelParams::back2base_dist, 0, 0);
+	tf2::Vector3 base2front(ModelParams::base2front_dist, 0, 0);
 	// cout << "back2base x = " << back2base.getX() << ", y = " << back2base.getY() << endl;
 
-	back2base = tf2::quatRotate(wheelchair_quat, back2base);
+	base2front = tf2::quatRotate(wheelchair_quat, base2front);
 
-	back2base = tf2::quatRotate(map_quat, back2base);
+	// base2front = tf2::quatRotate(map_quat, base2front);
 
-	// cout << "After map rotation, back2base x = " << back2base.getX() << ", y = " << back2base.getY() << endl;
+	// cout << "After map rotation, base2front x = " << base2front.getX() << ", y = " << base2front.getY() << endl;
 
 	// first check the base link point
 
-	tf2::Vector3 check_vector(x_base, y_base, 0);
-	check_vector = tf2::quatRotate(map_quat, check_vector);
+	// tf2::Vector3 check_vector(x_base, y_base, 0);
+	// check_vector = tf2::quatRotate(map_quat, check_vector);
 
-	x_base = check_vector.getX();
-    y_base = check_vector.getY();
+	// x_base = check_vector.getX();
+    // y_base = check_vector.getY();
 
 	// cout << "After map rotation, x_base = " << x_base << ", y_base = " << y_base << endl;
 
-	int col_check = x_base >= 0 ? ceil(x_base / map_resolution) : floor(x_base / map_resolution);
-	int row_check = y_base >= 0 ? ceil(y_base / map_resolution) : floor(y_base / map_resolution);
+	int row_check = static_cast<int>(- x_base / ModelParams::map_resolution);
+	int col_check = static_cast<int>(- y_base / ModelParams::map_resolution);
 
 	int check_pixel = local_costmap.at<uint8_t>(y_center + row_check, x_center + col_check);
 
@@ -2903,7 +2931,7 @@ float WheelchairDSPOMDP::M2G_CollisionCheck(const WheelchairStruct& wheelchair_s
 
 	// cout << "check_times = " << check_times << endl;
 
-	// then check 8 points around the base_link that are back2base_dist away from the base_link that represent 8 directions
+	// then check 8 points around the base_link that are base2front_dist away from the base_link that represent 8 directions
 	tf2::Vector3 rotation_vector;
 	tf2::Matrix3x3 rotation_matrix;
 	float rotation_yaw = 0, x_check = 0, y_check = 0;
@@ -2911,23 +2939,23 @@ float WheelchairDSPOMDP::M2G_CollisionCheck(const WheelchairStruct& wheelchair_s
 	{
 		rotation_yaw = rotation_sign * (i + 1) * M_PI / 8;
 		rotation_matrix.setRPY(0, 0, rotation_yaw);
-		rotation_vector = rotation_matrix * back2base;
+		rotation_vector = rotation_matrix * base2front;
 
 		// cout << "rotation_yaw = " << rotation_yaw * 180 / M_PI << endl;
 		// cout << "rotation_vector x = " << rotation_vector.getX() << ", y = " << rotation_vector.getY() << endl;
 
-		check_vector.setValue(x_base - rotation_vector.getX(), y_base - rotation_vector.getY(), 0);
+		// check_vector.setValue(x_base + rotation_vector.getX(), y_base + rotation_vector.getY(), 0);
 		
 		// cout << "check_vector x = " << check_vector.getX() << ", y = " << check_vector.getY() << endl;
 		// check_vector = tf2::quatRotate(map_quat, check_vector);
 
-		x_check = check_vector.getX();
-		y_check = check_vector.getY();
+		x_check = x_base + rotation_vector.getX();
+		y_check = y_base + rotation_vector.getY();
 
 		// cout << "After map rotation, check_vector x = " << x_check << ", y = " << y_check << endl;
 
-		col_check = x_base >= 0 ? ceil(x_check / map_resolution) : floor(x_check / map_resolution);
-		row_check = y_base >= 0 ? ceil(y_check / map_resolution) : floor(y_check / map_resolution);
+		row_check = static_cast<int>(- x_base / ModelParams::map_resolution);
+		col_check = static_cast<int>(- y_base / ModelParams::map_resolution);
 
 		check_pixel = local_costmap.at<uint8_t>(y_center + row_check, x_center + col_check);
 
@@ -3032,7 +3060,7 @@ float WheelchairDSPOMDP::InstantGoalReachingCheck(WheelchairState& wheelchair_st
 	return reward;	
 }
 
-float WheelchairDSPOMDP::TransitWheelchair(WheelchairState& wheelchair_state, tf2::Quaternion& map_quat, int& transition_steps, float v_before, float v_after, float w_before, float w_after) const
+float WheelchairDSPOMDP::TransitWheelchair(WheelchairState& wheelchair_state, int& transition_steps, float v_before, float v_after, float w_before, float w_after) const
 {
 	// cout << "v_before " << v_before << ", v_after " << v_after << endl;
 	float reward = 0;
@@ -3071,7 +3099,7 @@ float WheelchairDSPOMDP::TransitWheelchair(WheelchairState& wheelchair_state, tf
 		// do the collision check
 		// cout << "1 x = " << wheelchair_state.wheelchair.agent_pose.position.x << ", y = " << wheelchair_state.wheelchair.agent_pose.position.y << endl;
 		// cout << "1 v = " << v_before << ", w = " << w_before << endl;
-		penalty_idx = CollisionCheck(wheelchair_state.wheelchair, map_quat);
+		penalty_idx = CollisionCheck(wheelchair_state.wheelchair);
 
 		if (penalty_idx > highest_penalty)
 			highest_penalty = penalty_idx;
@@ -3095,7 +3123,7 @@ float WheelchairDSPOMDP::TransitWheelchair(WheelchairState& wheelchair_state, tf
 		// do the collision check
 		// cout << "2 x = " << wheelchair_state.wheelchair.agent_pose.position.x << ", y = " << wheelchair_state.wheelchair.agent_pose.position.y << endl;
 		// cout << "2 v = " << v_temp << ", w = " << w_temp << endl;
-		penalty_idx = CollisionCheck(wheelchair_state.wheelchair, map_quat);
+		penalty_idx = CollisionCheck(wheelchair_state.wheelchair);
 
 		if (penalty_idx > highest_penalty)
 			highest_penalty = penalty_idx;
@@ -3119,7 +3147,7 @@ float WheelchairDSPOMDP::TransitWheelchair(WheelchairState& wheelchair_state, tf
 		// do the collision check
 		// cout << "3 x = " << wheelchair_state.wheelchair.agent_pose.position.x << ", y = " << wheelchair_state.wheelchair.agent_pose.position.y << endl;
 		// cout << "3 v = " << v_before << ", w = " << w_before << endl;
-		penalty_idx = CollisionCheck(wheelchair_state.wheelchair, map_quat);
+		penalty_idx = CollisionCheck(wheelchair_state.wheelchair);
 
 		if (penalty_idx > highest_penalty)
 			highest_penalty = penalty_idx;
@@ -3163,7 +3191,7 @@ float WheelchairDSPOMDP::TransitWheelchair(WheelchairState& wheelchair_state, tf
 		// do the collision check
 		// cout << "4 x = " << wheelchair_state.wheelchair.agent_pose.position.x << ", y = " << wheelchair_state.wheelchair.agent_pose.position.y << endl;
 		// cout << "4 v = " << v_temp << ", w = " << w_temp << endl;
-		penalty_idx = CollisionCheck(wheelchair_state.wheelchair, map_quat);
+		penalty_idx = CollisionCheck(wheelchair_state.wheelchair);
 
 		if (penalty_idx > highest_penalty)
 			highest_penalty = penalty_idx;
@@ -3208,7 +3236,7 @@ float WheelchairDSPOMDP::TransitWheelchair(WheelchairState& wheelchair_state, tf
 			// do the collision check
 			// cout << "5 x = " << wheelchair_state.wheelchair.agent_pose.position.x << ", y = " << wheelchair_state.wheelchair.agent_pose.position.y << endl;
 			// cout << "5 v = " << v_temp << ", w = " << w_temp << endl;
-			penalty_idx = CollisionCheck(wheelchair_state.wheelchair, map_quat);
+			penalty_idx = CollisionCheck(wheelchair_state.wheelchair);
 
 			if (penalty_idx > highest_penalty)
 			highest_penalty = penalty_idx;
@@ -3339,7 +3367,7 @@ float WheelchairDSPOMDP::TransitWheelchair(WheelchairState& wheelchair_state, tf
 	return reward;			// return the reward for transition
 }
 
-bool WheelchairDSPOMDP::TransitParticles(WheelchairState& wheelchair_state, tf2::Quaternion& map_quat, float v_before, float v_after, float w_before, float w_after) const
+bool WheelchairDSPOMDP::TransitParticles(WheelchairState& wheelchair_state, float v_before, float v_after, float w_before, float w_after) const
 {
 	// check if it requires more than 1 step to finish the velocity change
 	// if (fabs(v_after - v_before) > ModelParams::transition_time * ModelParams::max_v_acceleration)
@@ -3392,7 +3420,7 @@ bool WheelchairDSPOMDP::TransitParticles(WheelchairState& wheelchair_state, tf2:
 		yaw += w_before * first_phase;
 	}
 	// do the collision check
-	penalty_idx = CollisionCheck(wheelchair_state.wheelchair, map_quat);
+	penalty_idx = CollisionCheck(wheelchair_state.wheelchair);
 
 	if (penalty_idx > highest_penalty)
 		highest_penalty = penalty_idx;
@@ -3413,7 +3441,7 @@ bool WheelchairDSPOMDP::TransitParticles(WheelchairState& wheelchair_state, tf2:
 		yaw += w_temp * second_phase;
 	}
 	// do the collision check
-	penalty_idx = CollisionCheck(wheelchair_state.wheelchair, map_quat);
+	penalty_idx = CollisionCheck(wheelchair_state.wheelchair);
 
 	if (penalty_idx > highest_penalty)
 		highest_penalty = penalty_idx;
@@ -3445,7 +3473,7 @@ bool WheelchairDSPOMDP::TransitParticles(WheelchairState& wheelchair_state, tf2:
 		for (int i = 0; i < goal_positions.size(); ++i)
 		{
 			nav_msgs::Path temp_path_traversed = wheelchair_state.path_traversed;
-			ContractAndInterpolatePath(wheelchair_state.wheelchair, temp_path_traversed, wheelchair_state.path2waypoint.paths[i], map_quat);
+			ContractAndInterpolatePath(wheelchair_state.wheelchair, temp_path_traversed, wheelchair_state.path2waypoint.paths[i]);
 		}
 		wheelchair_state.path_traversed.poses.clear();
 	}
@@ -4498,9 +4526,9 @@ float WheelchairDSPOMDP::FollowingVel(tf2::Vector3 joystick_heading, float v_bef
 	return follow_cost;
 }
 
-float WheelchairDSPOMDP::FollowUserReward(tf2::Vector3& follow_heading, float& v_after, float& w_after, float& follow_cost) const
+float WheelchairDSPOMDP::FollowUserReward(tf2::Vector3& follow_heading, float& v_after, float& w_after, float& follow_cost, int& action_depth) const
 {
-	float follow_user_reward = (1 - follow_cost) * ModelParams::user_following_reward;
+	float follow_user_reward = (1 - follow_cost) * ModelParams::user_following_reward * powf(0.5, action_depth);
 	float weight_vel = 0;
 	if (fabs(v_after - follow_heading.getX()) < 0.1 && fabs(w_after - follow_heading.getY()) < 0.1)
 	{
@@ -4537,7 +4565,7 @@ float WheelchairDSPOMDP::FollowUserReward(tf2::Vector3& follow_heading, float& v
 
 		// float reward_idx = 1 - total_cost;
 
-		return follow_user_reward - ModelParams::user_following_reward * total_cost - 2 * ModelParams::inter_goal_reward;
+		return follow_user_reward - ModelParams::user_following_reward * total_cost - 100 * ModelParams::inter_goal_reward;
 
 		// return (0.5 - total_cost) * 2 * ModelParams::user_following_reward;
 	}
@@ -4685,12 +4713,12 @@ void WheelchairDSPOMDP::normalize(std::vector<float>& belief_vector) const
 	}
 }
 
-int WheelchairDSPOMDP::TurningSteps(float& angle2turn, float& current_w, float& angular_vel) const
+int WheelchairDSPOMDP::TurningSteps(float& angle2turn, float& current_w, float& angular_vel, float time_span) const
 {
 	// case 1: turn left, angular+
 	// case -1: turn right, angular-
 	// case 2: keep
-	float step_size = ModelParams::transition_time * ModelParams::max_w_acceleration;
+	float step_size = time_span * ModelParams::max_w_acceleration;
 	float time2turn = 0;
 	// max sector: accelerate to max speed and decelerate to 0
 	int max_sector_steps = ceil(ModelParams::max_angular_speed / step_size);
@@ -4699,13 +4727,13 @@ int WheelchairDSPOMDP::TurningSteps(float& angle2turn, float& current_w, float& 
 	float max_step_size = step_size * (max_sector_steps - 1);
 	float rounding_diff = ModelParams::max_angular_speed - max_step_size;
 	// first triangle, accelerate from 0 to max_step_size
-	acc_maxsector += 0.5 * ModelParams::transition_time * (max_sector_steps - 1) * max_step_size;
+	acc_maxsector += 0.5 * time_span * (max_sector_steps - 1) * max_step_size;
 	// second trapezoid, accelerate from max_step_size to max_angular_speed
-	acc_maxsector += 0.5 * ModelParams::transition_time * (max_step_size + ModelParams::max_angular_speed);
+	acc_maxsector += 0.5 * time_span * (max_step_size + ModelParams::max_angular_speed);
 	// third trapezoid, decelerate from max_angular_speed to rounding_diff
-	dec_maxsector += 0.5 * ModelParams::transition_time * (max_sector_steps - 1) * (rounding_diff + ModelParams::max_angular_speed);
+	dec_maxsector += 0.5 * time_span * (max_sector_steps - 1) * (rounding_diff + ModelParams::max_angular_speed);
 	// last triangle, decelerate from rounding_diff to 0
-	dec_maxsector += 0.5 * ModelParams::transition_time * rounding_diff;
+	dec_maxsector += 0.5 * time_span * rounding_diff;
 
 	maxsector = acc_maxsector + dec_maxsector;
 	// float maxsector = ModelParams::max_angular_speed * ModelParams::max_angular_speed / ModelParams::max_w_acceleration;
@@ -4719,14 +4747,14 @@ int WheelchairDSPOMDP::TurningSteps(float& angle2turn, float& current_w, float& 
 		if (maxsector >= fabs(angle2turn))
 		{
 			time2turn = 2 * sqrt(fabs(angle2turn) / ModelParams::max_w_acceleration);
-			if (time2turn > 2 * ModelParams::transition_time)
+			if (time2turn > 2 * time_span)
 			{
 				angular_vel = step_size;
 			}
 			else
 			{
-				angular_vel = fabs(angle2turn) / ModelParams::transition_time;
-				time2turn = 2 * ModelParams::transition_time;
+				angular_vel = fabs(angle2turn) / time_span;
+				time2turn = 2 * time_span;
 			}
 		}
 		// accelerate to max, keep and decelerate to 0
@@ -4747,8 +4775,8 @@ int WheelchairDSPOMDP::TurningSteps(float& angle2turn, float& current_w, float& 
 
 			max_sector_steps = floor(fabs(current_w) / step_size);
 			rounding_diff = fabs(current_w) - step_size * max_sector_steps;
-			float sector2stop = 0.5 * ModelParams::transition_time * max_sector_steps * (fabs(current_w) + rounding_diff);
-			sector2stop += 0.5 * ModelParams::transition_time * rounding_diff;
+			float sector2stop = 0.5 * time_span * max_sector_steps * (fabs(current_w) + rounding_diff);
+			sector2stop += 0.5 * time_span * rounding_diff;
 			// float sector2stop = 0.5 * current_w * current_w / ModelParams::max_w_acceleration;
 
 			// the wheelchair cannot stop when facing the path
@@ -4756,14 +4784,14 @@ int WheelchairDSPOMDP::TurningSteps(float& angle2turn, float& current_w, float& 
 			{
 				// add the time to stop to the total time first
 				time2turn += fabs(current_w)/ ModelParams::max_w_acceleration;
-				if (time2turn > ModelParams::transition_time)
+				if (time2turn > time_span)
 				{
 					angular_vel = current_w > 0 ? current_w - step_size : current_w + step_size;
 				}
 				else
 				{
 					angular_vel = -current_w;
-					time2turn = ModelParams::transition_time;
+					time2turn = time_span;
 				}
 				// then it becomes the first situation, wheelchair not moving, the rest angle to turn is sector2stop - angle2turn
 
@@ -4785,10 +4813,10 @@ int WheelchairDSPOMDP::TurningSteps(float& angle2turn, float& current_w, float& 
 				// check the max sector
 				max_sector_steps = ceil((ModelParams::max_angular_speed - fabs(current_w)) / step_size);
 				max_step_size = fabs(current_w) + step_size * (max_sector_steps - 1);
-				float time2max = max_sector_steps * ModelParams::transition_time;
+				float time2max = max_sector_steps * time_span;
 				// float time2max = (ModelParams::max_angular_speed - fabs(current_w)) / ModelParams::max_w_acceleration;
-				float current_maxsector = 0.5 * (fabs(current_w) + max_step_size) * ModelParams::transition_time * (max_sector_steps - 1);
-				current_maxsector += 0.5 * (max_step_size + ModelParams::max_angular_speed) * ModelParams::transition_time;
+				float current_maxsector = 0.5 * (fabs(current_w) + max_step_size) * time_span * (max_sector_steps - 1);
+				current_maxsector += 0.5 * (max_step_size + ModelParams::max_angular_speed) * time_span;
 				current_maxsector += dec_maxsector;
 
 				// accelerate and decelerate
@@ -4812,18 +4840,18 @@ int WheelchairDSPOMDP::TurningSteps(float& angle2turn, float& current_w, float& 
 					}
 					max_speed = fabs(current_w) + ModelParams::max_w_acceleration * acc_time;
 
-					if (acc_time > ModelParams::transition_time)
+					if (acc_time > time_span)
 					{
 						angular_vel = current_w > 0 ? current_w + step_size : current_w - step_size;
 					}
-					else if (acc_time <= 0.5 * ModelParams::transition_time)
+					else if (acc_time <= 0.5 * time_span)
 					{
 						angular_vel = current_w;
 					}
 					else
 					{
 						angular_vel = current_w > 0 ? max_speed : -max_speed;
-						acc_time = ModelParams::transition_time;
+						acc_time = time_span;
 					}
 					time2turn += acc_time;
 					time2turn += max_speed / ModelParams::max_w_acceleration;
@@ -4831,18 +4859,18 @@ int WheelchairDSPOMDP::TurningSteps(float& angle2turn, float& current_w, float& 
 				// accelerate to max, keep and decelerate
 				else
 				{
-					if (time2max > ModelParams::transition_time)
+					if (time2max > time_span)
 					{
 						angular_vel = current_w > 0 ? current_w + step_size : current_w - step_size;
 					}
-					// else if (time2max <= 0.5 * ModelParams::transition_time)
+					// else if (time2max <= 0.5 * time_span)
 					// {
 					// 	angular_vel = current_w;
 					// }
 					else
 					{
 						angular_vel = current_w > 0 ? ModelParams::max_angular_speed : -ModelParams::max_angular_speed;
-						time2max = ModelParams::transition_time;
+						time2max = time_span;
 					}
 					// first compute the time to keep max w
 					time2turn += (fabs(angle2turn) - current_maxsector) / ModelParams::max_angular_speed;
@@ -4857,22 +4885,22 @@ int WheelchairDSPOMDP::TurningSteps(float& angle2turn, float& current_w, float& 
 			// stop the wheelchair first by exerting max deceleration
 			max_sector_steps = floor(fabs(current_w) / step_size);
 			rounding_diff = fabs(current_w) - step_size * max_sector_steps;
-			float sector2stop = 0.5 * ModelParams::transition_time * max_sector_steps * (fabs(current_w) + rounding_diff);
-			sector2stop += 0.5 * ModelParams::transition_time * rounding_diff;
+			float sector2stop = 0.5 * time_span * max_sector_steps * (fabs(current_w) + rounding_diff);
+			sector2stop += 0.5 * time_span * rounding_diff;
 			
-			float stop_turning_time = (max_sector_steps + 1) * ModelParams::transition_time;
-			if (stop_turning_time > ModelParams::transition_time)
+			float stop_turning_time = (max_sector_steps + 1) * time_span;
+			if (stop_turning_time > time_span)
 			{
 				angular_vel = current_w > 0 ? current_w - step_size : current_w + step_size;
 			}
-			// else if (stop_turning_time <= 0.5 * ModelParams::transition_time)
+			// else if (stop_turning_time <= 0.5 * time_span)
 			// {
 			// 	angular_vel = 0;
 			// }
 			else
 			{
 				angular_vel = 0;
-				stop_turning_time = ModelParams::transition_time;
+				stop_turning_time = time_span;
 			}
 			time2turn += stop_turning_time;
 			// radians that can be finished before stop
@@ -4895,10 +4923,10 @@ int WheelchairDSPOMDP::TurningSteps(float& angle2turn, float& current_w, float& 
 		}
 	}
 
-	return ceil(time2turn / ModelParams::transition_time);
+	return ceil(time2turn / time_span);
 }
 
-void WheelchairDSPOMDP::ContractAndInterpolatePath(WheelchairStruct &wheelchair_status, nav_msgs::Path &path_traversed, nav_msgs::Path &original_path, tf2::Quaternion& map_quat) const
+void WheelchairDSPOMDP::ContractAndInterpolatePath(WheelchairStruct &wheelchair_status, nav_msgs::Path &path_traversed, nav_msgs::Path &original_path) const
 {
 	// contract the path and check collision
 
@@ -4941,13 +4969,13 @@ void WheelchairDSPOMDP::ContractAndInterpolatePath(WheelchairStruct &wheelchair_
 
 		// cout << "map_resolution " << map_resolution << endl;
 
-		if (dist2checkpoint < map_resolution)	// distance is smaller than map_resolution
+		if (dist2checkpoint < ModelParams::map_resolution)	// distance is smaller than map_resolution
 		{
 			continue;	// skip this point and move to the next point
 		}
 		else	// distance >= map_resolution, form a straight line to link current_position and check_point to do collision check
 		{
-			float num_steps = dist2checkpoint / map_resolution;
+			float num_steps = dist2checkpoint / ModelParams::map_resolution;
 			// cout << "num_steps " << num_steps << endl;
 			// calculate linear increment in x and y to reduce computation costs
 			float increment_x = (check_point.x - current_position.x) / num_steps;
@@ -4973,14 +5001,17 @@ void WheelchairDSPOMDP::ContractAndInterpolatePath(WheelchairStruct &wheelchair_
 					temp_path.push_back(pose2add);
 				}
 
-				tf2::Vector3 check_vector(moving_point.x, moving_point.y, 0);
-				check_vector = tf2::quatRotate(map_quat, check_vector);
+				// tf2::Vector3 check_vector(moving_point.x, moving_point.y, 0);
+				// check_vector = tf2::quatRotate(map_quat, check_vector);
 
-				float x_check = check_vector.getX();
-				float y_check = check_vector.getY();
+				// float x_check = check_vector.getX();
+				// float y_check = check_vector.getY();
 
-				int col_check = x_check >= 0 ? ceil(x_check / map_resolution) : floor(x_check / map_resolution);
-				int row_check = y_check >= 0 ? ceil(y_check / map_resolution) : floor(y_check / map_resolution);
+				int row_check = static_cast<int>(- moving_point.x / ModelParams::map_resolution);
+            	int col_check = static_cast<int>(- moving_point.y / ModelParams::map_resolution);
+
+				// int col_check = x_check >= 0 ? ceil(x_check / map_resolution) : floor(x_check / map_resolution);
+				// int row_check = y_check >= 0 ? ceil(y_check / map_resolution) : floor(y_check / map_resolution);
 
 				// cout << "x_center in costmap frame: " << x_center << endl;
 				// cout << "y_center in costmap frame: " << y_center << endl;

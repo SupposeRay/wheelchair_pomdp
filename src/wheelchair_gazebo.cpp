@@ -43,12 +43,12 @@ bool GazeboWheelchairWorld::Connect()
     spinner_.reset(new ros::AsyncSpinner(0));
     // exe_time_ros = ros::Time::now();
     // setup topics and service clients
-    // scan_subscriber_ = node_handle_->subscribe("/scan", 1, &GazeboWheelchairWorld::scanCallback, this);
+    scan_subscriber_ = node_handle_->subscribe("/scan", 1, &GazeboWheelchairWorld::scanCallback, this);
     path_subscriber_ = node_handle_->subscribe("/move_base/SharedVoronoiGlobalPlanner/all_paths", 1, &GazeboWheelchairWorld::pathCallback, this);
-    odom_subscriber_ = node_handle_->subscribe("/odom", 1, &GazeboWheelchairWorld::odomCallback, this);
-    joystick_subscriber_ = node_handle_->subscribe("/arduino/joystick", 1, &GazeboWheelchairWorld::joystickCallback, this);
+    odom_subscriber_ = node_handle_->subscribe("/odometry/filtered", 1, &GazeboWheelchairWorld::odomCallback, this);
+    joystick_subscriber_ = node_handle_->subscribe("/joystick_calib", 1, &GazeboWheelchairWorld::joystickCallback, this);
     // joystick_subscriber_ = node_handle_->subscribe("/keyboard", 1, &GazeboWheelchairWorld::joystickCallback, this);
-    map_subscriber_ = node_handle_->subscribe("/move_base/local_costmap/costmap", 1, &GazeboWheelchairWorld::mapCallback, this);
+    // map_subscriber_ = node_handle_->subscribe("/move_base/local_costmap/costmap", 1, &GazeboWheelchairWorld::mapCallback, this);
     pdwa_subscriber_ = node_handle_->subscribe("/shared_dwa/pure_dwa_vel", 1, &GazeboWheelchairWorld::pdwaCallback, this);
     bdwa_subscriber_ = node_handle_->subscribe("/shared_dwa/cmd_vel", 1, &GazeboWheelchairWorld::bdwaCallback, this);
     weight_subscriber_ = node_handle_->subscribe("/shared_dwa/user_weight", 1, &GazeboWheelchairWorld::weightCallback, this);
@@ -132,6 +132,20 @@ bool GazeboWheelchairWorld::Connect()
     pre_positions.clear();
     goal_positions.reserve(ModelParams::num_paths);
 
+    // plot_ptr = new plot_scan::PlotScan();
+    // float plot_height = 3.0;
+    // plot_ptr->setImgSize(ModelParams::costmap_cols, ModelParams::costmap_rows);
+    // plot_ptr->setHeight(plot_height);
+    // plot_ptr->setFocal(plot_height / ModelParams::map_resolution);
+    // cv::namedWindow("plot", CV_WINDOW_NORMAL);
+    temp_costmap.create(ModelParams::costmap_rows, ModelParams::costmap_cols, CV_8UC1);
+    local_costmap.create(ModelParams::costmap_rows, ModelParams::costmap_cols, CV_8UC1);
+
+    temp_costmap = cv::Mat(ModelParams::costmap_rows, ModelParams::costmap_cols, CV_8UC1, cv::Scalar(0));
+    local_costmap = cv::Mat(ModelParams::costmap_rows, ModelParams::costmap_cols, CV_8UC1, cv::Scalar(0));
+
+    max_lidar_range = ModelParams::costmap_rows * ModelParams::map_resolution / 2 + 1;
+
     spinner_->start();
 
     ros::Duration(2.0).sleep();
@@ -174,9 +188,9 @@ State* GazeboWheelchairWorld::Initialize()
         ROS_ERROR_STREAM("Odometry info not received.");
         topics_receive = false;
     }
-    if (!costmap_receive)
+    if (!scan_receive)
     {
-        ROS_ERROR_STREAM("Local costmap info not received.");
+        ROS_ERROR_STREAM("Lidar info not received.");
         topics_receive = false;
     }
     if (!joystick_receive)
@@ -192,7 +206,7 @@ State* GazeboWheelchairWorld::Initialize()
 
     // ==============================================
 
-    if (planner_type == "POMDP")
+    if (planner_type == "POMDP" || planner_type == "POMDPX")
     {
         generateUserPath();
         updateModelInfo();
@@ -218,6 +232,9 @@ State* GazeboWheelchairWorld::Initialize()
     pub_cmd_vel = cmd_vel;
     old_cmd_vel = cmd_vel;
 
+    reach_destination = false;
+    stop_wheelchair = false;
+    stop_count = 0;
     // GetCurrentState();
     std::cout << "========================= Intialized world =============================" << std::endl;
 
@@ -247,108 +264,29 @@ bool GazeboWheelchairWorld::ExecuteAction(ACT_TYPE action, OBS_TYPE& obs)
     // cout << "ExecuteAction called in " << time_elapsed_ros << "s in ROS." << endl;
     // exe_time_ros = ros::Time::now();
     #endif
+    if (stop_wheelchair)
+    {
+        cout << "DESPOT terminated." << endl;
+        return true;
+    }
     WheelchairObs wheelchair_external_obs;
     wheelchair_external_obs.continuous_obs = true;
     std::ostringstream obs_string;
     // Stop the wheelchair if there's no joystick input or the planning step reaches the max number
-    if (zero_joystick_input || (action == -1))
+    if (zero_joystick_input || (action == -1) || reach_destination)
     {
         cmd_vel.linear.x = 0;
         cmd_vel.angular.z = 0;
         // vel_publisher_.publish(cmd_vel);
         pub_cmd_vel = cmd_vel;
-        wheelchair_external_obs.wheelchair_pose = initial_wheelchair_local_status.agent_pose;
-        wheelchair_external_obs.agent_pose_angle = initial_wheelchair_local_status.agent_pose_angle;
-        wheelchair_external_obs.wheelchair_twist.linear.x = 0;
-        wheelchair_external_obs.wheelchair_twist.angular.z = 0;
-        wheelchair_external_obs.joystick_signal.x = joystick_input.x;
-        wheelchair_external_obs.joystick_signal.y = joystick_input.y;
-        wheelchair_external_obs.joystick_signal.z = joystick_input.z;
-        wheelchair_model_->PrintObs(wheelchair_external_obs, obs_string);
-        // takes printed string to obs_string and converts to a hash value
-        uint64_t hashValue = wheelchair_model_->obsHash(obs_string.str());
-        // takes hashValue and updates value of obs in ObservationClass
-        wheelchair_external_obs.SetIntObs(hashValue);
 
-        // Updates hashmap:
-        // takes hash value as key and stores wheelchair_obs as value in map
-        // First check if hash value is already stored
-        if (wheelchair_model_->obsHashMap_execution.find(hashValue) == wheelchair_model_->obsHashMap_execution.end())
+        if (planner_type == "POMDP" || planner_type == "POMDPX")
         {
-            wheelchair_model_->obsHashMap_execution[hashValue] = wheelchair_external_obs;
-        }
-        obs = (OBS_TYPE) hashValue;
-        return false;
-    }
-
-    // ros::spinOnce();
-    // Clear hashmap from previous round first
-    wheelchair_model_->obsHashMap.clear();
-    bool terminate_execution = false;
-    // Update wheelchair status (velocity)
-    if (!odom_receive)
-    {
-        ROS_ERROR_STREAM("Failed to receive odom message");
-        return 1; // exit
-    }
-
-    // cout << "Printing action values in ExecuteAction..." << endl;
-    // for (int i = 0; i < Globals::config.action_values.size(); ++ i)
-    // {
-    //     cout << "Action " << i << ", value = " << Globals::config.action_values[i] << endl;
-    // }
-    // std::vector<float>::iterator itMax = std::max_element(Globals::config.action_values.begin(), Globals::config.action_values.end());
-    // int best_action_index = std::distance(Globals::config.action_values.begin(), itMax);
-    // // cout << "Optimal action value " << best_action_index << ", value = " << Globals::config.action_values[best_action_index] << endl;
-    // float best_action_value = Globals::config.action_values[best_action_index];
-
-    cmd_vel = current_vel;
-    float scale_factor = 1.0; // wheelchair_state_->collision_idx > 0 ? ModelParams::step_scale : 1.0;
-
-    float max_linear_speed = joystick_input.x > 0 ? fabs(joystick_input.x) : ModelParams::backing_ratio * fabs(joystick_input.x);
-    max_linear_speed = std::min(max_linear_speed, ModelParams::max_linear_speed);
-
-    float linear_step_size = ModelParams::planning_time * ModelParams::std_v_acceleration;
-    float angular_step_size = ModelParams::planning_time * ModelParams::std_w_acceleration;
-
-    int total_normal_actions = ModelParams::num_normal_actions + ModelParams::num_dwa_actions;
-
-    if (base_pixel >= ModelParams::outer_pixel_thres || back_pixel >= ModelParams::outer_pixel_thres)
-    {
-        cout << "The wheelchair is inside the collision area..." << endl;
-        cout << "Moving to path " << instant_index + 1 << "..." << endl;
-        if (fabs(current_vel.linear.x) < 0.2 && fabs(current_vel.angular.z) < 0.2)
-        {
-            stuck_count++;            
-        }
-        if (stuck_count * ModelParams::planning_time >= 2)
-        {
-            cout << "Switching to manual control mode at a slow speed..." << endl;
-            cmd_vel.linear.x = joystick_input.x;
-            cmd_vel.angular.z = joystick_input.y;
-            if (joystick_input.x > 0.15)
-            {
-                cmd_vel.linear.x = 0.15;
-            }
-            else if (joystick_input.x < -0.15)
-            {
-                cmd_vel.linear.x = -0.15;
-            }
-
-            if (joystick_input.y > 0.2)
-            {
-                cmd_vel.angular.z = 0.2;
-            }
-            else if (joystick_input.y < -0.2)
-            {
-                cmd_vel.angular.z = -0.2;
-            }
-            // vel_publisher_.publish(cmd_vel);
-            pub_cmd_vel = cmd_vel;
-            wheelchair_model_->collision_index = CheckCollision();
+            stuck_count = 0;
             wheelchair_external_obs.wheelchair_pose = initial_wheelchair_local_status.agent_pose;
             wheelchair_external_obs.agent_pose_angle = initial_wheelchair_local_status.agent_pose_angle;
-            wheelchair_external_obs.wheelchair_twist = current_vel;
+            wheelchair_external_obs.wheelchair_twist.linear.x = 0;
+            wheelchair_external_obs.wheelchair_twist.angular.z = 0;
             wheelchair_external_obs.joystick_signal.x = joystick_input.x;
             wheelchair_external_obs.joystick_signal.y = joystick_input.y;
             wheelchair_external_obs.joystick_signal.z = joystick_input.z;
@@ -366,20 +304,123 @@ bool GazeboWheelchairWorld::ExecuteAction(ACT_TYPE action, OBS_TYPE& obs)
                 wheelchair_model_->obsHashMap_execution[hashValue] = wheelchair_external_obs;
             }
             obs = (OBS_TYPE) hashValue;
-            return false;
         }
-        action = total_normal_actions + instant_index;
-    }
-    else
-    {
-        stuck_count = 0;
+        return false;
     }
 
-    if (projected_cmd_collision)
+    // ros::spinOnce();
+    // bool terminate_execution = false;
+
+    if (planner_type == "POMDP" || planner_type == "POMDPX")
     {
-        cout << "The joystick is pointing towards a collision area..." << endl;
-        cout << "Moving to path " << instant_index + 1 << "..." << endl;
-        action = total_normal_actions + instant_index;
+        // Clear hashmap from previous round first
+        wheelchair_model_->obsHashMap.clear();
+        wheelchair_model_->collision_index = CheckCollision();
+    }
+
+    // cout << "Printing action values in ExecuteAction..." << endl;
+    // for (int i = 0; i < Globals::config.action_values.size(); ++ i)
+    // {
+    //     cout << "Action " << i << ", value = " << Globals::config.action_values[i] << endl;
+    // }
+    // std::vector<float>::iterator itMax = std::max_element(Globals::config.action_values.begin(), Globals::config.action_values.end());
+    // int best_action_index = std::distance(Globals::config.action_values.begin(), itMax);
+    // // cout << "Optimal action value " << best_action_index << ", value = " << Globals::config.action_values[best_action_index] << endl;
+    // float best_action_value = Globals::config.action_values[best_action_index];
+
+    // Update wheelchair status (velocity)
+    // if (!odom_receive)
+    // {
+    //     ROS_ERROR_STREAM("Failed to receive odom message");
+    //     return true; // exit
+    // }
+
+    cmd_vel = current_vel;
+    float scale_factor = 1.0; // wheelchair_state_->collision_idx > 0 ? ModelParams::step_scale : 1.0;
+
+    float max_linear_speed = joystick_input.x > 0 ? fabs(joystick_input.x) : ModelParams::backing_ratio * fabs(joystick_input.x);
+    max_linear_speed = std::min(max_linear_speed, ModelParams::max_linear_speed);
+
+    float linear_step_size = ModelParams::planning_time * ModelParams::std_v_acceleration;
+    float angular_step_size = ModelParams::planning_time * ModelParams::std_w_acceleration;
+
+    int total_normal_actions = ModelParams::num_normal_actions + ModelParams::num_dwa_actions;
+
+    if (planner_type == "POMDP" || planner_type == "POMDPX")
+    {
+        if (base_pixel >= ModelParams::outer_pixel_thres || front_pixel >= ModelParams::outer_pixel_thres)
+        {
+            cout << "The wheelchair is inside the collision area..." << endl;
+            cout << "Moving to path " << instant_index + 1 << "..." << endl;
+            cout << "stuck_count = " << stuck_count << "..." << endl;
+            if (fabs(current_vel.linear.x) < 0.1 && fabs(current_vel.angular.z) < 0.1)
+            {
+                stuck_count++;
+            }
+            if (stuck_count * ModelParams::planning_time >= 2)
+            {
+                cout << "Switching to manual control mode at a slow speed..." << endl;
+                cmd_vel.linear.x = joystick_input.x;
+                cmd_vel.angular.z = joystick_input.y;
+                if (joystick_input.x > 0.15)
+                {
+                    cmd_vel.linear.x = 0.15;
+                }
+                else if (joystick_input.x < -0.15)
+                {
+                    cmd_vel.linear.x = -0.15;
+                }
+
+                if (joystick_input.y > 0.2)
+                {
+                    cmd_vel.angular.z = 0.2;
+                }
+                else if (joystick_input.y < -0.2)
+                {
+                    cmd_vel.angular.z = -0.2;
+                }
+                // vel_publisher_.publish(cmd_vel);
+                pub_cmd_vel = cmd_vel;
+                // wheelchair_model_->collision_index = CheckCollision();
+                wheelchair_external_obs.wheelchair_pose = initial_wheelchair_local_status.agent_pose;
+                wheelchair_external_obs.agent_pose_angle = initial_wheelchair_local_status.agent_pose_angle;
+                wheelchair_external_obs.wheelchair_twist = current_vel;
+                wheelchair_external_obs.joystick_signal.x = joystick_input.x;
+                wheelchair_external_obs.joystick_signal.y = joystick_input.y;
+                wheelchair_external_obs.joystick_signal.z = joystick_input.z;
+                wheelchair_model_->PrintObs(wheelchair_external_obs, obs_string);
+                // takes printed string to obs_string and converts to a hash value
+                uint64_t hashValue = wheelchair_model_->obsHash(obs_string.str());
+                // takes hashValue and updates value of obs in ObservationClass
+                wheelchair_external_obs.SetIntObs(hashValue);
+
+                // Updates hashmap:
+                // takes hash value as key and stores wheelchair_obs as value in map
+                // First check if hash value is already stored
+                if (wheelchair_model_->obsHashMap_execution.find(hashValue) == wheelchair_model_->obsHashMap_execution.end())
+                {
+                    wheelchair_model_->obsHashMap_execution[hashValue] = wheelchair_external_obs;
+                }
+                obs = (OBS_TYPE) hashValue;
+                cout << "Current velocity: linear v: " << current_vel.linear.x << ", angular w: " << current_vel.angular.z << endl;
+                cout << "Joystick input: x: " << joystick_input.x << ", y: " << joystick_input.y << endl;
+                cout << "Published Command: linear v: " << cmd_vel.linear.x << ", angular w: " << cmd_vel.angular.z << endl;
+                cout << "User control weight is " << user_weight << endl;
+                return false;
+            }
+            action = total_normal_actions + instant_index;
+        }
+        else
+        {
+            stuck_count = 0;
+        }
+
+        if (projected_cmd_collision)
+        {
+            cout << "The joystick is pointing towards a collision area..." << endl;
+            cout << "Moving to path " << instant_index + 1 << "..." << endl;
+            action = total_normal_actions + instant_index;
+        }        
     }
 
     switch (action)
@@ -472,15 +513,29 @@ bool GazeboWheelchairWorld::ExecuteAction(ACT_TYPE action, OBS_TYPE& obs)
     }
     default:    // move to goal actions
     {
-        tf2::Vector3 agent2path(in_intermediate_goals.paths[action - total_normal_actions].poses[2].pose.position.x,
-            in_intermediate_goals.paths[action - total_normal_actions].poses[2].pose.position.y, 0);
+        tf2::Vector3 agent2path(0, 0, 0);
         tf2::Vector3 agent_heading(1, 0, 0);
+        float angle2turn = 0, distance2goal = 0;
+        for (int i = 0; i < in_intermediate_goals.paths[action - total_normal_actions].poses.size(); ++i)
+        {
+            agent2path.setValue(in_intermediate_goals.paths[action - total_normal_actions].poses[i].pose.position.x,
+                in_intermediate_goals.paths[action - total_normal_actions].poses[i].pose.position.y, 0);
+
+            distance2goal = agent2path.length();
+
+            if (distance2goal >= 0.35)
+                break;
+        }
+        // tf2::Vector3 agent2path(in_intermediate_goals.paths[action - total_normal_actions].poses[1].pose.position.x,
+        //     in_intermediate_goals.paths[action - total_normal_actions].poses[1].pose.position.y, 0);
+        
         // the angle between current heading and the direction facing the path
-        float angle2turn = agent_heading.angle(agent2path);
+        angle2turn = agent_heading.angle(agent2path);
         cout << "The angle2turn is " << angle2turn * 180 / M_PI << endl;
+        cout << "The distance is " << distance2goal << endl;
         
         // the wheelchair is facing the path
-        if (fabs(angle2turn) <= 2 * ModelParams::facing_angle)
+        if (fabs(angle2turn) <= ModelParams::facing_angle)
         {
             // the wheelchair is facing the path, but still turning, stop the wheelchair
             if (fabs(current_vel.angular.z) > angular_step_size)
@@ -510,7 +565,7 @@ bool GazeboWheelchairWorld::ExecuteAction(ACT_TYPE action, OBS_TYPE& obs)
                 // {
                 //     cmd_vel.linear.x = linear_step_size * ModelParams::step_scale;
                 // }
-                cmd_vel.linear.x = linear_step_size * ModelParams::step_scale * ModelParams::step_scale;
+                cmd_vel.linear.x = linear_step_size;
                 // cmd_vel.linear.x = 0.25;
                 cmd_vel.angular.z = 0;
             }
@@ -551,29 +606,73 @@ bool GazeboWheelchairWorld::ExecuteAction(ACT_TYPE action, OBS_TYPE& obs)
                 float cross_product = agent_heading.getX() * agent2path.getY() - agent_heading.getY() * agent2path.getX();
                 angle2turn = (cross_product >= 0)? angle2turn : -angle2turn;
 
-                float angular_vel = 0;
-                float current_w = current_vel.angular.z;
-                if (current_w > ModelParams::max_angular_speed)
+                if (fabs(angle2turn) <= M_PI / 3)
                 {
-                    current_w = ModelParams::max_angular_speed;
-                }
-                if (current_w < - ModelParams::max_angular_speed)
-                {
-                    current_w = - ModelParams::max_angular_speed;
-                }
-                wheelchair_model_->TurningSteps(angle2turn, current_w, angular_vel);
+                    float angular_vel = 0;
+                    float current_w = current_vel.angular.z;
+                    if (current_w > ModelParams::max_angular_speed)
+                    {
+                        current_w = ModelParams::max_angular_speed;
+                    }
+                    if (current_w < - ModelParams::max_angular_speed)
+                    {
+                        current_w = - ModelParams::max_angular_speed;
+                    }
+                    wheelchair_model_->TurningSteps(angle2turn, current_w, angular_vel, ModelParams::planning_time);
 
-                cout << "The angular_vel is " << angular_vel << endl;
+                    cout << "The angular_vel is " << angular_vel << endl;
 
-                cmd_vel.linear.x = 0;
-                float actual_angular_vel = angular_step_size * ModelParams::step_scale;
-                if (fabs(angular_vel) >= actual_angular_vel)
-                {
-                    cmd_vel.angular.z = angular_vel > 0 ? actual_angular_vel : -actual_angular_vel;
+                    cmd_vel.linear.x = 0;
+                    float actual_angular_vel = angular_step_size * 1.4;
+                    if (fabs(angular_vel) >= actual_angular_vel)
+                    {
+                        cmd_vel.angular.z = angular_vel > 0 ? actual_angular_vel : -actual_angular_vel;
+                    }
+                    else
+                    {
+                        cmd_vel.angular.z = angular_vel;
+                    }
                 }
                 else
                 {
-                    cmd_vel.angular.z = angular_vel;
+                    if (base_pixel == 255 && front_pixel == 255)    // wheelchair's whole footprint inside the collision zone, 
+                    {
+                        // change to manual control at a low speed
+                        cout << "Wheelchair all inside collision zone, switching to manual control mode at a slow speed..." << endl;
+                        cmd_vel.linear.x = joystick_input.x;
+                        cmd_vel.angular.z = joystick_input.y;
+                        if (joystick_input.x > 0.15)
+                        {
+                            cmd_vel.linear.x = 0.15;
+                        }
+                        else if (joystick_input.x < -0.15)
+                        {
+                            cmd_vel.linear.x = -0.15;
+                        }
+
+                        if (joystick_input.y > 0.15)
+                        {
+                            cmd_vel.angular.z = 0.15;
+                        }
+                        else if (joystick_input.y < -0.15)
+                        {
+                            cmd_vel.angular.z = -0.15;
+                        }
+                    }
+                    else if (front_pixel == 255)     // wheelchair's front inside the collision zone.
+                    {
+                        // back the wheelchair
+                        cout << "Wheelchair front inside collision zone, backing the wheelchair..." << endl;
+                        cmd_vel.linear.x = - linear_step_size;
+                        cmd_vel.angular.z = 0;
+                    }
+                    else    // wheelchair's back inside the collision zone or whole wheelchair outside collision zone
+                    {
+                        // turn in place as usual
+                        cmd_vel.linear.x = 0;
+                        float actual_angular_vel = angular_step_size * 1.4;
+                        cmd_vel.angular.z = angle2turn > 0 ? actual_angular_vel : -actual_angular_vel;
+                    }
                 }
             }
         }
@@ -606,15 +705,6 @@ bool GazeboWheelchairWorld::ExecuteAction(ACT_TYPE action, OBS_TYPE& obs)
 
     // ros::Duration(0.010).sleep();
 
-    // Observation part
-    
-    wheelchair_external_obs.wheelchair_pose = initial_wheelchair_local_status.agent_pose;
-    wheelchair_external_obs.agent_pose_angle = initial_wheelchair_local_status.agent_pose_angle; //Do we need to calculate pose angle from pose here?
-    wheelchair_external_obs.wheelchair_twist = current_vel;
-    wheelchair_external_obs.joystick_signal.x = joystick_input.x;
-    wheelchair_external_obs.joystick_signal.y = joystick_input.y;
-    wheelchair_external_obs.joystick_signal.z = joystick_input.z;
-
     if (CheckDestination(current_pose, final_goal))
     {
         // terminate when the goal is reached
@@ -632,71 +722,85 @@ bool GazeboWheelchairWorld::ExecuteAction(ACT_TYPE action, OBS_TYPE& obs)
         ucmd_publisher_.publish(cmd_line);
         pomdp_publisher_.publish(pomdp_line);
         // cout << "Final goal: x = " << final_goal.position.x << ",y = " << final_goal.position.y << endl;
-        return true;
+        reach_destination = true;
+        // return false;
     }
-
-    wheelchair_model_->collision_index = CheckCollision();
-    // wheelchair_state_->collision_idx = wheelchair_model_->collision_index;
-    // if (wheelchair_model_->collision_index == 1)
-    // {
-    //     // terminate when a collision happens
-    //     cout << "A COLLLSION HAS HAPPENED!" << endl;
-    //     // cmd_vel.linear.x = 0;
-    //     // cmd_vel.angular.z = 0;
-    //     // // cout << "Published Command: linear v: " << cmd_vel.linear.x << ", angular w: " << cmd_vel.angular.z << endl;
-    //     // vel_publisher_.publish(cmd_vel);
-    //     // cancel_publisher_.publish(dummy_ID);
-    //     // cmd_line.points.clear();
-    //     // pomdp_line.points.clear();
-    //     // ucmd_publisher_.publish(cmd_line);
-    //     // pomdp_publisher_.publish(pomdp_line);
-    //     // // cout << "Final goal: x = " << final_goal.position.x << ",y = " << final_goal.position.y << endl;
-    //     // return true;
-    // }
-
-    wheelchair_model_->PrintObs(wheelchair_external_obs, obs_string);
-    // takes printed string to obs_string and converts to a hash value
-    uint64_t hashValue = wheelchair_model_->obsHash(obs_string.str());
-    #ifdef DEBUG
-    std::cout << "Hash value: " << hashValue << std::endl;
-    #endif
-    // takes hashValue and updates value of obs in ObservationClass
-    wheelchair_external_obs.SetIntObs(hashValue);
-
-    // Updates hashmap:
-    // takes hash value as key and stores wheelchair_obs as value in map
-    // First check if hash value is already stored
-    if (wheelchair_model_->obsHashMap_execution.find(hashValue) == wheelchair_model_->obsHashMap_execution.end())
+    
+    if (planner_type == "POMDP" || planner_type == "POMDPX")
     {
-        wheelchair_model_->obsHashMap_execution[hashValue] = wheelchair_external_obs;
-    }
+        // Observation part
+        wheelchair_external_obs.wheelchair_pose = initial_wheelchair_local_status.agent_pose;
+        wheelchair_external_obs.agent_pose_angle = initial_wheelchair_local_status.agent_pose_angle; //Do we need to calculate pose angle from pose here?
+        wheelchair_external_obs.wheelchair_twist = current_vel;
+        wheelchair_external_obs.joystick_signal.x = joystick_input.x;
+        wheelchair_external_obs.joystick_signal.y = joystick_input.y;
+        wheelchair_external_obs.joystick_signal.z = joystick_input.z;
 
-    // if (wheelchair_model_->obsHashMap_execution.find(hashValue) == wheelchair_model_->obsHashMap_execution.end())
-    // {
-    //     ROS_WARN_STREAM("Hash value not found.");
-    // }
-    // else
-    // {
-    //     ROS_WARN_STREAM("Hash value found.");
-    // }
-    obs = (OBS_TYPE) hashValue;
+        // wheelchair_model_->collision_index = CheckCollision();
+        // wheelchair_state_->collision_idx = wheelchair_model_->collision_index;
+        // if (wheelchair_model_->collision_index == 1)
+        // {
+        //     // terminate when a collision happens
+        //     cout << "A COLLLSION HAS HAPPENED!" << endl;
+        //     // cmd_vel.linear.x = 0;
+        //     // cmd_vel.angular.z = 0;
+        //     // // cout << "Published Command: linear v: " << cmd_vel.linear.x << ", angular w: " << cmd_vel.angular.z << endl;
+        //     // vel_publisher_.publish(cmd_vel);
+        //     // cancel_publisher_.publish(dummy_ID);
+        //     // cmd_line.points.clear();
+        //     // pomdp_line.points.clear();
+        //     // ucmd_publisher_.publish(cmd_line);
+        //     // pomdp_publisher_.publish(pomdp_line);
+        //     // // cout << "Final goal: x = " << final_goal.position.x << ",y = " << final_goal.position.y << endl;
+        //     // return true;
+        // }
 
-    // =================================================== 
+        wheelchair_model_->PrintObs(wheelchair_external_obs, obs_string);
+        // takes printed string to obs_string and converts to a hash value
+        uint64_t hashValue = wheelchair_model_->obsHash(obs_string.str());
+        #ifdef DEBUG
+        std::cout << "Hash value: " << hashValue << std::endl;
+        #endif
+        // takes hashValue and updates value of obs in ObservationClass
+        wheelchair_external_obs.SetIntObs(hashValue);
 
-    // Check if state is updated
-    #ifdef DEBUG
-    #endif
-    // std::cout << "Execute Action: \n\t";
-    // std::cout << wheelchair_state_->text() << std::endl; 
-    // update the lidar info
-    // wheelchair_model_->lidar_points = lidar_points;
+        // Updates hashmap:
+        // takes hash value as key and stores wheelchair_obs as value in map
+        // First check if hash value is already stored
+        if (wheelchair_model_->obsHashMap_execution.find(hashValue) == wheelchair_model_->obsHashMap_execution.end())
+        {
+            wheelchair_model_->obsHashMap_execution[hashValue] = wheelchair_external_obs;
+        }
 
-    /* Update the internal info */
+        // if (wheelchair_model_->obsHashMap_execution.find(hashValue) == wheelchair_model_->obsHashMap_execution.end())
+        // {
+        //     ROS_WARN_STREAM("Hash value not found.");
+        // }
+        // else
+        // {
+        //     ROS_WARN_STREAM("Hash value found.");
+        // }
+        obs = (OBS_TYPE) hashValue;
 
-    if (planner_type == "POMDP")
-    {
+        // =================================================== 
+
+        // Check if state is updated
+        #ifdef DEBUG
+        #endif
+        // std::cout << "Execute Action: \n\t";
+        // std::cout << wheelchair_state_->text() << std::endl; 
+        // update the lidar info
+        // wheelchair_model_->lidar_points = lidar_points;
+
+        /* Update the internal info */
+
         generateUserPath();
         updateModelInfo();
+
+        if (Globals::config.useGPU)
+        {
+            wheelchair_model_->UpdateGPUModel();
+        }
     }
     // cv::Mat scan_img;
 
@@ -706,11 +810,6 @@ bool GazeboWheelchairWorld::ExecuteAction(ACT_TYPE action, OBS_TYPE& obs)
     // cv::imwrite(filename, scan_img);
 
     // img_count ++;
-
-    if (Globals::config.useGPU)
-    {
-        wheelchair_model_->UpdateGPUModel();
-    }
     return false;
 }
 
@@ -723,50 +822,100 @@ void GazeboWheelchairWorld::PrintState(const State& state, ostream& out) const
 	out << "Goal door global position: x = " << goal_positions[wheelchair_state.path_idx].pose.position.x << "; y = " << goal_positions[wheelchair_state.path_idx].pose.position.y << endl;
 }
 
-// void GazeboWheelchairWorld::scanCallback(const sensor_msgs::LaserScan::ConstPtr &msg_scan)
-// {
-//     //Get static transform from lidar to base_link in case they are not in the same frame
-//     if (lidar2baseTransform.header.frame_id != base_frame_id && msg_scan->header.frame_id != base_frame_id)
-//     {
-//         ROS_INFO("LIDAR is not in base link frame and transform has not been found yet, finding transform");
-//         try
-//         {
-//             lidar2baseTransform = tf_buffer.lookupTransform(base_frame_id, msg_scan->header.frame_id, ros::Time(0), ros::Duration(tf_buffer_timeout));
-//             ROS_INFO("Transform found, all future scans received by shared_pomdp will be transformed before being used for collision checking");
-//         }
-//         catch (tf2::TransformException &Exception)
-//         {
-//             ROS_ERROR("LIDAR tranform could not be found, shared_pomdp may be incorrect");
-//             ROS_ERROR_STREAM(Exception.what());
-//         }
-//     }
-//     // scan_pointer = msg_scan;
-//     lidar_points.clear();
-//     lidar_points.reserve(msg_scan->ranges.size());
-//     for (int k = 0; k < msg_scan->ranges.size(); ++k)
-//     {
-//         geometry_msgs::Point temp_point;
-//         temp_point.x = msg_scan->ranges[k] * cos(msg_scan->angle_min + k * msg_scan->angle_increment);
-//         temp_point.y = msg_scan->ranges[k] * sin(msg_scan->angle_min + k * msg_scan->angle_increment);
+void GazeboWheelchairWorld::scanCallback(const sensor_msgs::LaserScan::ConstPtr &msg_scan)
+{
+    //Get static transform from lidar to base_link in case they are not in the same frame
+    // if (lidar2baseTransform.header.frame_id != base_frame_id && msg_scan->header.frame_id != base_frame_id)
+    // {
+    //     ROS_INFO("LIDAR is not in base link frame and transform has not been found yet, finding transform");
+    //     try
+    //     {
+    //         lidar2baseTransform = tf_buffer.lookupTransform(base_frame_id, msg_scan->header.frame_id, ros::Time(0), ros::Duration(tf_buffer_timeout));
+    //         ROS_INFO("Transform found, all future scans received by shared_pomdp will be transformed before being used for collision checking");
+    //     }
+    //     catch (tf2::TransformException &Exception)
+    //     {
+    //         ROS_ERROR("LIDAR tranform could not be found, shared_pomdp may be incorrect");
+    //         ROS_ERROR_STREAM(Exception.what());
+    //     }
+    // }
+    // scan_pointer = msg_scan;
 
-//         //If transform header is not empty
-//         if (!lidar2baseTransform.header.frame_id.empty())
-//             tf2::doTransform<geometry_msgs::Point>(temp_point, temp_point, lidar2baseTransform);
+    // plot_ptr->drawScan(msg_scan, local_costmap);
 
-//         // if (fabs(temp_point.x) + fabs(temp_point.y) <= 0.4)
-//         // {
-//         //     cout << "temp_point.x " << temp_point.x << ", temp_point.y " << temp_point.y << endl;
-//         //     cout << "range " << msg_scan->ranges[k] << endl;
-//         // }
-// 		// else if (sqrtf(powf(temp_point.x, 2) + powf(temp_point.y, 2)) <= 0.4)
-//         // {
-//         //     cout << "temp_point.x " << temp_point.x << ", temp_point.y " << temp_point.y << endl;
-//         //     cout << "range " << msg_scan->ranges[k] << endl;
-//         // }
-//         lidar_points.emplace_back(std::move(temp_point));
-//     }
-//     scan_receive = true;
-// }
+    int scan_size = msg_scan->ranges.size();
+    float x = 0, y = 0, row = 0, col = 0;
+    temp_costmap = cv::Mat::zeros(ModelParams::costmap_rows, ModelParams::costmap_cols, CV_8UC1);
+    
+    for (int i = 0; i < scan_size; ++i)
+    {
+        if (msg_scan->ranges[i] < max_lidar_range && msg_scan->ranges[i] >= msg_scan->range_min)
+        {
+            x = msg_scan->ranges[i] * cos(msg_scan->angle_min + (double) i * msg_scan->angle_increment);
+            y = msg_scan->ranges[i] * sin(msg_scan->angle_min + (double) i * msg_scan->angle_increment);
+
+            // std::cout << "i = " << i << ", x = " << x << ", y = " << y << std::endl;
+
+            row = round(-x / ModelParams::map_resolution + ModelParams::costmap_rows / 2);
+            col = round(-y / ModelParams::map_resolution + ModelParams::costmap_cols / 2);
+
+            if(col > ModelParams::costmap_cols - 1 || col < 0 || row > ModelParams::costmap_rows - 1 || row < 0)
+            {
+                continue;
+            }
+            else
+            {
+                temp_costmap.at<uint8_t>(row, col) = 255;
+            }
+        }
+    }
+
+    // cv::cvtColor(temp_costmap, temp_costmap, cv::COLOR_RGB2GRAY);
+    // cv::threshold(temp_costmap, temp_costmap, 128, 255, cv::THRESH_BINARY_INV);
+
+    // Dilation size on one side of obstacle is pixel/map_resolution/2
+	// ie 20 pixels * 0.05m/px / 2 = 0.5m inflation on obstacles
+	int morph_size = ModelParams::outer_radius * 2 / ModelParams::map_resolution;
+	cv::Mat structure_element = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(morph_size, morph_size));
+	cv::dilate(temp_costmap, temp_costmap, structure_element);
+
+    x_center = ModelParams::costmap_rows / 2;
+    y_center = ModelParams::costmap_cols / 2;
+    
+
+    thread_mutex.lock();
+    local_costmap = temp_costmap.clone();
+    thread_mutex.unlock();
+
+    // cv::imshow("plot", local_costmap);
+    // cv::waitKey(1);
+
+    // lidar_points.clear();
+    // lidar_points.reserve(msg_scan->ranges.size());
+    // for (int k = 0; k < msg_scan->ranges.size(); ++k)
+    // {
+    //     geometry_msgs::Point temp_point;
+    //     temp_point.x = msg_scan->ranges[k] * cos(msg_scan->angle_min + k * msg_scan->angle_increment);
+    //     temp_point.y = msg_scan->ranges[k] * sin(msg_scan->angle_min + k * msg_scan->angle_increment);
+
+    //     //If transform header is not empty
+    //     if (!lidar2baseTransform.header.frame_id.empty())
+    //         tf2::doTransform<geometry_msgs::Point>(temp_point, temp_point, lidar2baseTransform);
+
+    //     // if (fabs(temp_point.x) + fabs(temp_point.y) <= 0.4)
+    //     // {
+    //     //     cout << "temp_point.x " << temp_point.x << ", temp_point.y " << temp_point.y << endl;
+    //     //     cout << "range " << msg_scan->ranges[k] << endl;
+    //     // }
+	// 	// else if (sqrtf(powf(temp_point.x, 2) + powf(temp_point.y, 2)) <= 0.4)
+    //     // {
+    //     //     cout << "temp_point.x " << temp_point.x << ", temp_point.y " << temp_point.y << endl;
+    //     //     cout << "range " << msg_scan->ranges[k] << endl;
+    //     // }
+    //     lidar_points.emplace_back(std::move(temp_point));
+    // }
+    scan_receive = true;
+}
 
 void GazeboWheelchairWorld::joystickCallback(const geometry_msgs::Point::ConstPtr &msg_point)
 {
@@ -796,66 +945,66 @@ void GazeboWheelchairWorld::odomCallback(const nav_msgs::Odometry::ConstPtr &msg
     odom_receive = true;
 }
 
-void GazeboWheelchairWorld::mapCallback(const nav_msgs::OccupancyGrid::ConstPtr &msg_map)
-{
-    // map.height = msg->info.height;
-	// map.width = msg->info.width;
-	// map.frame_id = msg->header.frame_id;
-	// map.resolution = msg->info.resolution;
-	// map.origin.position.x = msg->info.origin.position.x;
-	// map.origin.position.y = msg->info.origin.position.y;
-    map_resolution = msg_map->info.resolution;
-    map_pose = msg_map->info.origin;
+// void GazeboWheelchairWorld::mapCallback(const nav_msgs::OccupancyGrid::ConstPtr &msg_map)
+// {
+//     // map.height = msg->info.height;
+// 	// map.width = msg->info.width;
+// 	// map.frame_id = msg->header.frame_id;
+// 	// map.resolution = msg->info.resolution;
+// 	// map.origin.position.x = msg->info.origin.position.x;
+// 	// map.origin.position.y = msg->info.origin.position.y;
+//     map_resolution = msg_map->info.resolution;
+//     map_pose = msg_map->info.origin;
 
-	// Dilate image
-	local_costmap = cv::Mat(msg_map->data).reshape(0, msg_map->info.height);
-	local_costmap.convertTo(local_costmap, CV_8UC1);
+// 	// Dilate image
+// 	local_costmap = cv::Mat(msg_map->data).reshape(0, msg_map->info.height);
+// 	local_costmap.convertTo(local_costmap, CV_8UC1);
 
-    x_center = local_costmap.cols % 2 == 0 ? local_costmap.cols / 2 - 1 : (local_costmap.cols - 1) / 2;
-    y_center = local_costmap.rows % 2 == 0 ? local_costmap.rows / 2 - 1 : (local_costmap.rows - 1) / 2;
+//     x_center = local_costmap.cols % 2 == 0 ? local_costmap.cols / 2 - 1 : (local_costmap.cols - 1) / 2;
+//     y_center = local_costmap.rows % 2 == 0 ? local_costmap.rows / 2 - 1 : (local_costmap.rows - 1) / 2;
 
-    // for (int i = 0; i < local_costmap.rows; i++)
-    // {
-    //     for (int j = 0; j < local_costmap.cols; j++)
-    //     {
-    //         if (std::isnan(local_costmap.at<uint8_t>(i, j)))
-    //         {
-    //             cout << "There's nan value in the costmap." << endl;
-    //         }
+//     // for (int i = 0; i < local_costmap.rows; i++)
+//     // {
+//     //     for (int j = 0; j < local_costmap.cols; j++)
+//     //     {
+//     //         if (std::isnan(local_costmap.at<uint8_t>(i, j)))
+//     //         {
+//     //             cout << "There's nan value in the costmap." << endl;
+//     //         }
 
-    //         cout << "Row " << i << ", col " << j << ", value = " << local_costmap.at<uint8_t>(i, j) << endl;
-    //     }
-    // }
+//     //         cout << "Row " << i << ", col " << j << ", value = " << local_costmap.at<uint8_t>(i, j) << endl;
+//     //     }
+//     // }
 
-    // ROS_INFO_STREAM(local_costmap);
+//     // ROS_INFO_STREAM(local_costmap);
 
-    // std::string filename = "/home/ray/DESPOT-LOG/original_costmap_" + std::to_string(img_count) + ".jpg";
-    // cv::imwrite(filename, local_costmap);
+//     // std::string filename = "/home/ray/DESPOT-LOG/original_costmap_" + std::to_string(img_count) + ".jpg";
+//     // cv::imwrite(filename, local_costmap);
 
-    //Dilation size on one side of obstacle is pixel/map_resolution/2
-	//ie 20 pixels * 0.05m/px / 2 = 0.5m inflation on obstacles
-	// int morph_size = ModelParams::dilation_radius * 2 / map_resolution;
-	// cv::Mat structure_element = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(morph_size, morph_size));
-	// cv::dilate(local_costmap, local_costmap, structure_element);
+//     //Dilation size on one side of obstacle is pixel/map_resolution/2
+// 	//ie 20 pixels * 0.05m/px / 2 = 0.5m inflation on obstacles
+// 	// int morph_size = ModelParams::dilation_radius * 2 / map_resolution;
+// 	// cv::Mat structure_element = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(morph_size, morph_size));
+// 	// cv::dilate(local_costmap, local_costmap, structure_element);
 
-	//Blur. Blur kernel must be odd number
-	// int blur_size = ModelParams::blur_radius * 2 / map_resolution;
-	// blur_size += (blur_size + 1) % 2;
+// 	//Blur. Blur kernel must be odd number
+// 	// int blur_size = ModelParams::blur_radius * 2 / map_resolution;
+// 	// blur_size += (blur_size + 1) % 2;
 
-	// cv::GaussianBlur(local_costmap, local_costmap, cv::Size(blur_size, blur_size), 3);
-    // filename = "/home/ray/DESPOT-LOG/Gaussian_costmap_" + std::to_string(img_count) + ".jpg";
-    // cv::imwrite(filename, local_costmap);
+// 	// cv::GaussianBlur(local_costmap, local_costmap, cv::Size(blur_size, blur_size), 3);
+//     // filename = "/home/ray/DESPOT-LOG/Gaussian_costmap_" + std::to_string(img_count) + ".jpg";
+//     // cv::imwrite(filename, local_costmap);
 
-    // cv::blur(local_costmap, local_costmap, cv::Size(blur_size, blur_size));
-    // filename = "/home/ray/DESPOT-LOG/Mean_costmap_" + std::to_string(img_count) + ".jpg";
-    // cv::imwrite(filename, local_costmap);
+//     // cv::blur(local_costmap, local_costmap, cv::Size(blur_size, blur_size));
+//     // filename = "/home/ray/DESPOT-LOG/Mean_costmap_" + std::to_string(img_count) + ".jpg";
+//     // cv::imwrite(filename, local_costmap);
 
-    // cv::GaussianBlur(local_costmap, local_costmap, cv::Size(blur_size, blur_size), 3);
-    // filename = "/home/ray/DESPOT-LOG/Gaussian_costmap_" + std::to_string(img_count) + ".jpg";
-    // cv::imwrite(filename, local_costmap);
-    // img_count++;
-    costmap_receive = true;
-}
+//     // cv::GaussianBlur(local_costmap, local_costmap, cv::Size(blur_size, blur_size), 3);
+//     // filename = "/home/ray/DESPOT-LOG/Gaussian_costmap_" + std::to_string(img_count) + ".jpg";
+//     // cv::imwrite(filename, local_costmap);
+//     // img_count++;
+//     costmap_receive = true;
+// }
 
 void GazeboWheelchairWorld::pdwaCallback(const geometry_msgs::Twist::ConstPtr &msg_pdwa)
 {
@@ -908,48 +1057,69 @@ bool GazeboWheelchairWorld::CheckDestination(const geometry_msgs::Pose current_p
 
 float GazeboWheelchairWorld::CheckCollision()
 {
-    tf2::Vector3 check_vector_back(-ModelParams::back2base_dist, 0, 0);
+    // tf2::Vector3 check_vector_front(ModelParams::base2front_dist, 0, 0);
 
-	check_vector_back = tf2::quatRotate(map_quaternion, check_vector_back);
-    float x_back = check_vector_back.getX();
-    float y_back = check_vector_back.getY();
+	// check_vector_front = tf2::quatRotate(map_quaternion, check_vector_front);
+    float x_front = ModelParams::base2front_dist;
+    float y_front = 0;
 
     base_pixel = local_costmap.at<uint8_t>(y_center, x_center);
 
-    int col_back = x_back >= 0 ? ceil(x_back / map_resolution) : floor(x_back / map_resolution);
-	int row_back = y_back >= 0 ? ceil(y_back / map_resolution) : floor(y_back / map_resolution);
+    int row_front = static_cast<int>(- x_front / ModelParams::map_resolution);
+	int col_front = 0;
 
-	back_pixel = local_costmap.at<uint8_t>(y_center + row_back, x_center + col_back);
+	front_pixel = local_costmap.at<uint8_t>(x_center + row_front, y_center + col_front);
 
     cout << "base_pixel =  " << base_pixel << endl;
-    cout << "back_pixel =  " << back_pixel << endl;
+    cout << "front_pixel =  " << front_pixel << endl;
 
-	if (base_pixel >= ModelParams::outer_pixel_thres || back_pixel >= ModelParams::outer_pixel_thres)
+    // std::string file_direct;
+
+    // if (base_pixel == 255 || front_pixel == 255)
+    // {
+    //     file_direct = "CY";
+    // }
+    // else
+    // {
+    //     file_direct = "CN";
+    // }
+
+
+    // std::string filename = "/home/ray/DESPOT-LOG/" + std::to_string(img_count) + ".jpg";
+    // cv::imwrite(filename, local_costmap);
+
+    // img_count ++;
+
+	if (base_pixel >= ModelParams::outer_pixel_thres || front_pixel >= ModelParams::outer_pixel_thres)
 	{
 		return 1;
 	}
-	else if (base_pixel < ModelParams::inner_pixel_thres && back_pixel < ModelParams::inner_pixel_thres)
-	{
-		return 0;
-	}
-	else
-	{
-		if (base_pixel < ModelParams::inner_pixel_thres)
-		{
-			return 0.5 * (static_cast<float>(back_pixel) - ModelParams::inner_pixel_thres) / (ModelParams::outer_pixel_thres - ModelParams::inner_pixel_thres);
-		}
-		else if (back_pixel < ModelParams::inner_pixel_thres)
-		{
-			return 0.5 * (static_cast<float>(base_pixel) - ModelParams::inner_pixel_thres) / (ModelParams::outer_pixel_thres - ModelParams::inner_pixel_thres);
-		}
-		else
-		{
-			float double_collision = 0;
-			double_collision = (static_cast<float>(base_pixel) - ModelParams::inner_pixel_thres) / (ModelParams::outer_pixel_thres - ModelParams::inner_pixel_thres);
-			double_collision += (static_cast<float>(back_pixel) - ModelParams::inner_pixel_thres) / (ModelParams::outer_pixel_thres - ModelParams::inner_pixel_thres);
-			return 0.5 * double_collision;
-		}
-	}
+    else
+    {
+        return 0;
+    }
+	// else if (base_pixel < ModelParams::inner_pixel_thres && front_pixel < ModelParams::inner_pixel_thres)
+	// {
+	// 	return 0;
+	// }
+	// else
+	// {
+	// 	if (base_pixel < ModelParams::inner_pixel_thres)
+	// 	{
+	// 		return 0.5 * (static_cast<float>(front_pixel) - ModelParams::inner_pixel_thres) / (ModelParams::outer_pixel_thres - ModelParams::inner_pixel_thres);
+	// 	}
+	// 	else if (front_pixel < ModelParams::inner_pixel_thres)
+	// 	{
+	// 		return 0.5 * (static_cast<float>(base_pixel) - ModelParams::inner_pixel_thres) / (ModelParams::outer_pixel_thres - ModelParams::inner_pixel_thres);
+	// 	}
+	// 	else
+	// 	{
+	// 		float double_collision = 0;
+	// 		double_collision = (static_cast<float>(base_pixel) - ModelParams::inner_pixel_thres) / (ModelParams::outer_pixel_thres - ModelParams::inner_pixel_thres);
+	// 		double_collision += (static_cast<float>(front_pixel) - ModelParams::inner_pixel_thres) / (ModelParams::outer_pixel_thres - ModelParams::inner_pixel_thres);
+	// 		return 0.5 * double_collision;
+	// 	}
+	// }
 	// float r_collision = ModelParams::inner_radius;
 	// float r_outer = ModelParams::outer_radius;
 	// float temp_dist = 0;
@@ -1008,6 +1178,13 @@ void GazeboWheelchairWorld::publishtimerCallback(const ros::TimerEvent &)
 {
     // cout << "pub_cmd_vel x = " << pub_cmd_vel.linear.x << " y = " << pub_cmd_vel.angular.z << endl;
     geometry_msgs::Twist temp_twist = pub_cmd_vel;
+    if (reach_destination)
+    {
+        // cout << "stop_count = " << stop_count << endl;
+        pub_cmd_vel.linear.x = 0;
+        pub_cmd_vel.angular.z = 0;
+        stop_count++;
+    }
     if (fabs(pub_cmd_vel.linear.x - old_cmd_vel.linear.x) > ModelParams::publish_interval * ModelParams::max_v_acceleration)
     {
         if (pub_cmd_vel.linear.x  > old_cmd_vel.linear.x)
@@ -1034,25 +1211,30 @@ void GazeboWheelchairWorld::publishtimerCallback(const ros::TimerEvent &)
     temp_twist.linear.x = round(temp_twist.linear.x * 1000) / 1000;
     temp_twist.angular.z = round(temp_twist.angular.z * 1000) / 1000;
     vel_publisher_.publish(temp_twist);
+    if (stop_count > 20)
+    {
+        stop_wheelchair = true;
+        cout << "Quitting DESPOT..." << endl;
+    }
     old_cmd_vel = temp_twist;
 }
 
 void GazeboWheelchairWorld::updatetimerCallback(const ros::TimerEvent &)
 {
-    if (joystick_receive && odom_receive && path_receive && costmap_receive)
+    if (joystick_receive && odom_receive && path_receive && scan_receive)
     {
         /* The footprint of the wheelchair */
 
         geometry_msgs::Point32 temp_point;
 
-        temp_point.x = 0.4;
-        temp_point.y = 0.4;
+        temp_point.x = 1.05;
+        temp_point.y = 0.45;
         footprint_polygon.polygon.points.push_back(temp_point);
-        temp_point.y = -0.4;
+        temp_point.y = -0.45;
         footprint_polygon.polygon.points.push_back(temp_point);
-        temp_point.x = -(temp_point.x + ModelParams::back2base_dist);
+        temp_point.x = -0.55;
         footprint_polygon.polygon.points.push_back(temp_point);
-        temp_point.y = 0.4;
+        temp_point.y = 0.45;
         footprint_polygon.polygon.points.push_back(temp_point);
 
         /* The footprint of a dynamic rectangle used to compute the clearance index */
@@ -1336,7 +1518,7 @@ void GazeboWheelchairWorld::updatetimerCallback(const ros::TimerEvent &)
 
         std::vector<float>::iterator itMax = std::max_element(belief_goal.begin(), belief_goal.end());
         int most_likely_index = std::distance(belief_goal.begin(), itMax);
-        most_likely_path.data = ex_intermediate_goals.paths[most_likely_index].header.seq;
+        most_likely_path.data = path_list.paths[most_likely_index].header.seq;
 
         itMax = std::max_element(instant_goal.begin(), instant_goal.end());
         instant_index = std::distance(instant_goal.begin(), itMax);
@@ -1447,26 +1629,26 @@ void GazeboWheelchairWorld::generateGoal()
     // waypoint_viz.points.clear();
     ex_intermediate_goals.paths.clear();
     ex_intermediate_goals.paths.resize(path_list.paths.size());
-    in_intermediate_goals.paths.clear();
-    in_intermediate_goals.paths.resize(path_list.paths.size());
+    temp_intermediate_goals.paths.clear();
+    temp_intermediate_goals.paths.resize(path_list.paths.size());
     goal_positions.clear();
     goal_positions.resize(path_list.paths.size());
     belief_points.clear();
     belief_points.resize(path_list.paths.size());
     current_pose = getGlobalAgentPose().pose;
 
-    tf2::Vector3 map_vector(1, 0, 0), heading_vector(1, 0, 0);
-    tf2::Quaternion rotate_quat;
-    tf2::convert(map_pose.orientation, rotate_quat);
-    map_vector = tf2::quatRotate(rotate_quat, map_vector);
-    tf2::convert(current_pose.orientation, rotate_quat);
-    heading_vector = tf2::quatRotate(rotate_quat, heading_vector);
+    // tf2::Vector3 map_vector(1, 0, 0), heading_vector(1, 0, 0);
+    // tf2::Quaternion rotate_quat;
+    // tf2::convert(map_pose.orientation, rotate_quat);
+    // map_vector = tf2::quatRotate(rotate_quat, map_vector);
+    // tf2::convert(current_pose.orientation, rotate_quat);
+    // heading_vector = tf2::quatRotate(rotate_quat, heading_vector);
 
-    agent2map_yaw = heading_vector.angle(map_vector);
+    // agent2map_yaw = heading_vector.angle(map_vector);
 
-    float cross_product = heading_vector.getX() * map_vector.getY() - heading_vector.getY() * map_vector.getX();
-    agent2map_yaw = (cross_product >= 0) ? agent2map_yaw : - agent2map_yaw;
-    map_quaternion.setRPY(0, 0, - agent2map_yaw);
+    // float cross_product = heading_vector.getX() * map_vector.getY() - heading_vector.getY() * map_vector.getX();
+    // agent2map_yaw = (cross_product >= 0) ? agent2map_yaw : - agent2map_yaw;
+    // map_quaternion.setRPY(0, 0, - agent2map_yaw);
 
     for (int i = 0; i < path_list.paths.size(); i++)
     {
@@ -1492,25 +1674,30 @@ void GazeboWheelchairWorld::generateGoal()
     // update local intermediate goals
     for (int i = 0; i < ex_intermediate_goals.paths.size(); i++)
     {
-        in_intermediate_goals.paths[i].poses.resize(ex_intermediate_goals.paths[i].poses.size());
+        temp_intermediate_goals.paths[i].poses.resize(ex_intermediate_goals.paths[i].poses.size());
         for (int j = 0; j < ex_intermediate_goals.paths[i].poses.size(); j++)
         {
             tf2::doTransform<geometry_msgs::Pose>(ex_intermediate_goals.paths[i].poses[j].pose,
-                in_intermediate_goals.paths[i].poses[j].pose, map2localTransform);
+                temp_intermediate_goals.paths[i].poses[j].pose, map2localTransform);
             // waypoint_viz.points.push_back(wheelchair_model_->intermediate_goal_list.paths[i].poses[j].pose.position);
         }
-        in_intermediate_goals.paths[i].header.frame_id = base_frame_id;
-        goal_positions[i].pose = in_intermediate_goals.paths[i].poses[in_intermediate_goals.paths[i].poses.size() - 1].pose;
+        temp_intermediate_goals.paths[i].header.frame_id = base_frame_id;
+        goal_positions[i].pose = temp_intermediate_goals.paths[i].poses[temp_intermediate_goals.paths[i].poses.size() - 1].pose;
         goal_positions[i].header.frame_id = base_frame_id;
-        if (in_intermediate_goals.paths[i].poses.size() > 6)
+        if (temp_intermediate_goals.paths[i].poses.size() > 6)
         {
-            belief_points[i] = in_intermediate_goals.paths[i].poses[6].pose.position;
+            belief_points[i] = temp_intermediate_goals.paths[i].poses[6].pose.position;
         }
         else
         {
             belief_points[i] = goal_positions[i].pose.position;
         }
     }
+
+    thread_mutex.lock();
+    in_intermediate_goals.paths.resize(temp_intermediate_goals.paths.size());
+    in_intermediate_goals = temp_intermediate_goals;
+    thread_mutex.unlock();
     // update_DMP_weights();
     //printGoals();
     //step_no++;
@@ -1518,11 +1705,12 @@ void GazeboWheelchairWorld::generateGoal()
 
 void GazeboWheelchairWorld::generateUserPath()
 {
-    user_path.header = in_intermediate_goals.paths[0].header;
-    user_path.poses.clear();
+    temp_user_path.header = in_intermediate_goals.paths[0].header;
+    temp_user_path.poses.clear();
     geometry_msgs::PoseStamped moving_point;
-    moving_point.header = user_path.header;
-    tf2::Vector3 projected_joystick(joystick_input.x * ModelParams::waypoint_dist, joystick_input.y * ModelParams::waypoint_dist, 0);
+    moving_point.header = temp_user_path.header;
+    tf2::Vector3 projected_joystick(joystick_input.x * ModelParams::waypoint_dist / ModelParams::max_linear_speed,
+        joystick_input.y * ModelParams::waypoint_dist / ModelParams::max_angular_speed, 0);
     float projected_length = projected_joystick.length();
 
     float x_check = 0;
@@ -1532,7 +1720,7 @@ void GazeboWheelchairWorld::generateUserPath()
 
     if (projected_length <= 0.2) // almost no user input, generate an empty path
     {
-        user_path.poses.push_back(moving_point);
+        temp_user_path.poses.push_back(moving_point);
     }
     else    // user has input
     {
@@ -1541,21 +1729,22 @@ void GazeboWheelchairWorld::generateUserPath()
         float increment_y = projected_joystick.getY() / num_steps;
 
         // first check collision
-        tf2::Vector3 map_joystick;
+        // tf2::Vector3 map_joystick;
         // remap the joystick to map frame
-        map_joystick = tf2::quatRotate(map_quaternion, projected_joystick);
-        float map_increment_x = map_joystick.getX() / num_steps;
-        float map_increment_y = map_joystick.getY() / num_steps;
+        // map_joystick = tf2::quatRotate(map_quaternion, projected_joystick);
+        float map_increment_x = projected_joystick.getX() / num_steps;
+        float map_increment_y = projected_joystick.getY() / num_steps;
         for (int j = round(num_steps); j > 0; --j)
         {
             x_check = j * map_increment_x;
             y_check = j * map_increment_y;
 
-            col_check = x_check >= 0 ? ceil(x_check / map_resolution) : floor(x_check / map_resolution);
-            row_check = y_check >= 0 ? ceil(y_check / map_resolution) : floor(y_check / map_resolution);
+            row_check = static_cast<int>(- x_check / ModelParams::map_resolution);
+            col_check = static_cast<int>(- y_check / ModelParams::map_resolution);
+            
 
             // collision happened
-            if (local_costmap.at<uint8_t>(y_center + row_check, x_center + col_check) > ModelParams::outer_pixel_thres)
+            if (local_costmap.at<uint8_t>(x_center + row_check, y_center + col_check) > ModelParams::outer_pixel_thres)
             {
                 dummy_goal_collision = true;
                 break;
@@ -1566,7 +1755,7 @@ void GazeboWheelchairWorld::generateUserPath()
         if (dummy_goal_collision)
         {
             // dummy goal in collision, change to existing paths
-            user_path = in_intermediate_goals.paths[instant_index];
+            temp_user_path = in_intermediate_goals.paths[instant_index];
         }
         else
         {
@@ -1589,44 +1778,97 @@ void GazeboWheelchairWorld::generateUserPath()
                 yaw = point_direction.getY() >= 0 ? yaw : - yaw;
                 point_quat.setRPY(0, 0, yaw);
                 tf2::convert(point_quat, moving_point.pose.orientation);
-                user_path.poses.push_back(moving_point);
+                temp_user_path.poses.push_back(moving_point);
                 previous_point.x = moving_point.pose.position.x;
                 previous_point.y = moving_point.pose.position.y;
             }
         }
     }
 
-    if (joystick_input.x >= -0.2)
+    thread_mutex.lock();
+    user_path = temp_user_path;
+    thread_mutex.unlock();
+
+    if (joystick_input.x >= -0.1)
     {
         float theta_cmd = 0;
-        int sample_number = 5;
-        float sample_time = 1.0;
+        int sample_number = 8;
+        float sample_time = 1.6;
         float sample_interval = sample_time / static_cast<float>(sample_number);
         float cmd_line_x = 0, cmd_line_y = 0;
-        tf2::Vector3 projected_cmd(0, 0, 0);
+        // float check_width = 0.3;
+        // tf2::Vector3 center2left(0, check_width, 0);
+        // tf2::Vector3 center2right(0, -check_width, 0);
+        // tf2::Quaternion projected_quat;
+        // tf2::Vector3 projected_cmd(0, 0, 0);
         for (int i = 0; i < sample_number; i++)
         {
             cmd_line_x += joystick_input.x * cos(theta_cmd) * sample_interval;
             cmd_line_y += joystick_input.x * sin(theta_cmd) * sample_interval;
             theta_cmd += joystick_input.y * sample_interval;
-            projected_cmd.setX(cmd_line_x);
-            projected_cmd.setY(cmd_line_y);
-            projected_cmd.setZ(0);
-            projected_cmd = tf2::quatRotate(map_quaternion, projected_cmd);
+            // projected_cmd.setX(cmd_line_x);
+            // projected_cmd.setY(cmd_line_y);
+            // projected_cmd.setZ(0);
+            // projected_cmd = tf2::quatRotate(map_quaternion, projected_cmd);
 
-            x_check = projected_cmd.getX();
-            y_check = projected_cmd.getY();
+            // x_check = projected_cmd.getX();
+            // y_check = projected_cmd.getY();
 
-            col_check = x_check >= 0 ? ceil(x_check / map_resolution) : floor(x_check / map_resolution);
-            row_check = y_check >= 0 ? ceil(y_check / map_resolution) : floor(y_check / map_resolution);
+            row_check = static_cast<int>(- cmd_line_x / ModelParams::map_resolution);
+            col_check = static_cast<int>(- cmd_line_y / ModelParams::map_resolution);
+
+            // col_check = x_check >= 0 ? ceil(x_check / map_resolution) : floor(x_check / map_resolution);
+            // row_check = y_check >= 0 ? ceil(y_check / map_resolution) : floor(y_check / map_resolution);
 
             // collision happened
-            if (local_costmap.at<uint8_t>(y_center + row_check, x_center + col_check) > ModelParams::outer_pixel_thres)
+            if (local_costmap.at<uint8_t>(x_center + row_check, y_center + col_check) > ModelParams::outer_pixel_thres)
             {
                 projected_cmd_collision = true;
                 break;
             }
             projected_cmd_collision = false;
+
+            // if (i >= sample_number - 3)
+            // {
+            //     projected_quat.setRPY(0, 0, theta_cmd);
+            //     center2left = tf2::quatRotate(projected_quat, center2left);
+            //     center2right = tf2::quatRotate(projected_quat, center2right);
+            //     float left_x = cmd_line_x + center2left.getX();
+            //     float left_y = cmd_line_y + center2left.getY();
+            //     float right_x = cmd_line_x + center2right.getX();
+            //     float right_y = cmd_line_y + center2right.getY();
+            //     projected_cmd.setX(left_x);
+            //     projected_cmd.setY(left_y);
+            //     projected_cmd.setZ(0);
+            //     projected_cmd = tf2::quatRotate(map_quaternion, projected_cmd);
+            //     x_check = projected_cmd.getX();
+            //     y_check = projected_cmd.getY();
+
+            //     col_check = x_check >= 0 ? ceil(x_check / map_resolution) : floor(x_check / map_resolution);
+            //     row_check = y_check >= 0 ? ceil(y_check / map_resolution) : floor(y_check / map_resolution);
+            //     // collision happened
+            //     if (local_costmap.at<uint8_t>(y_center + row_check, x_center + col_check) > ModelParams::outer_pixel_thres)
+            //     {
+            //         projected_cmd_collision = true;
+            //         break;
+            //     }
+
+            //     projected_cmd.setX(right_x);
+            //     projected_cmd.setY(right_y);
+            //     projected_cmd.setZ(0);
+            //     projected_cmd = tf2::quatRotate(map_quaternion, projected_cmd);
+            //     x_check = projected_cmd.getX();
+            //     y_check = projected_cmd.getY();
+
+            //     col_check = x_check >= 0 ? ceil(x_check / map_resolution) : floor(x_check / map_resolution);
+            //     row_check = y_check >= 0 ? ceil(y_check / map_resolution) : floor(y_check / map_resolution);
+            //     // collision happened
+            //     if (local_costmap.at<uint8_t>(y_center + row_check, x_center + col_check) > ModelParams::outer_pixel_thres)
+            //     {
+            //         projected_cmd_collision = true;
+            //         break;
+            //     }
+            // }
         }
     }
     else
@@ -1636,7 +1878,7 @@ void GazeboWheelchairWorld::generateUserPath()
 
     // cout << "Collision check = " << dummy_goal_collision << endl;
     // cout << "Remapped goal index = " << instant_index + 1 << endl;
-    // cout << "User path, size = "<< user_path.poses.size() << endl;
+    // cout << "User path, size = "<< temp_user_path.poses.size() << endl;
 	// for (int i = 0; i < user_path.poses.size(); ++i)
 	// {
 	// 	cout << user_path.poses[i].pose.position.x << " " << user_path.poses[i].pose.position.y << endl;
@@ -1645,13 +1887,11 @@ void GazeboWheelchairWorld::generateUserPath()
 
 void GazeboWheelchairWorld::updateModelInfo()
 {
-    // update the costmap info
-    wheelchair_model_->local_costmap = local_costmap;
-    wheelchair_model_->map_resolution = map_resolution;
+    // wheelchair_model_->map_resolution = map_resolution;
     wheelchair_model_->x_center = x_center;
     wheelchair_model_->y_center = y_center;
-    wheelchair_model_->agent2map_yaw = agent2map_yaw;
-    wheelchair_model_->map_quaternion = map_quaternion;
+    // wheelchair_model_->agent2map_yaw = agent2map_yaw;
+    // wheelchair_model_->map_quaternion = map_quaternion;
     // update joystick input
     wheelchair_model_->external_joy_x = joystick_input.x;
     wheelchair_model_->external_joy_y = joystick_input.y;
@@ -1665,11 +1905,15 @@ void GazeboWheelchairWorld::updateModelInfo()
     wheelchair_model_->goal_positions.clear();
     wheelchair_model_->goal_positions = goal_positions;
 
+    thread_mutex.lock();
+    // update the costmap info
+    wheelchair_model_->local_costmap = local_costmap.clone();
     // update path info
     wheelchair_model_->intermediate_goal_list.paths.clear();
     wheelchair_model_->intermediate_goal_list.paths.resize(path_list.paths.size());
     wheelchair_model_->intermediate_goal_list = in_intermediate_goals;
     wheelchair_model_->user_path = user_path;
+    thread_mutex.unlock();
     wheelchair_model_->dummy_goal_collision = dummy_goal_collision;
     // wheelchair_model_->projected_cmd_collision = projected_cmd_collision;
     wheelchair_model_->instant_index = instant_index;

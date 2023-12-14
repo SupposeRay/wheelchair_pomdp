@@ -12,8 +12,8 @@
 //#include "cs.h"
 //#include "dmp.h"
 //#include <dlfcn.h>
-#include <Eigen/Dense>
-#include <Eigen/Core>
+#include <eigen3/Eigen/Dense>
+#include <eigen3/Eigen/Core>
 #include "numpy/ndarraytypes.h"
 
 #include <voronoi_msgs_and_types/PathList.h>

@@ -105,6 +105,10 @@ public:
       {
         for (int i = 0; i < Globals::config.sim_len;)
         {
+          if (wheelchair_world->stop_wheelchair)
+          {
+            break;
+          }
           if (!wheelchair_world->zero_joystick_input)
           {
             terminal = RunStep(solver, world, logger);
@@ -120,6 +124,7 @@ public:
               cout << endl << "No joystick input, the system has been paused..." << endl << endl;
               print_flag = false;
             }
+            wheelchair_world->stuck_count = 0;
             continue;
           }
           if (i == Globals::config.sim_len - 1)
@@ -171,10 +176,14 @@ public:
     double step_start_t = get_time_second();
 
     double start_t = get_time_second();
-    ACT_TYPE action = 0;
+    ACT_TYPE action = -1;
     if (wheelchair_world->planner_type == "POMDP")
     {
       action = solver->Search().action;
+    }
+    else if (wheelchair_world->planner_type == "POMDPX")
+    {
+      action = 6;
     }
     else if (wheelchair_world->planner_type == "pure-DWA")
     {
