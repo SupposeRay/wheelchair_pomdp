@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+
+<launch>
+  <node pkg="wheelchair_pomdp" type="wheelchair_pomdp" name="wheelchair_pomdp" output="screen">
+    <!-- <rosparam file="$(find wheelchair_pomdp)/config/wheelchair_pomdp.yaml" command="load"/> -->
+    <!-- <remap from="/odom" to="/odometry/filtered"/> -->
+  </node>
+
+</launch>

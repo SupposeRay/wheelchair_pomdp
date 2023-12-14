@@ -1,0 +1,4 @@
+POMDP
+
+# config file
+# planner options: POMDP, belief-DWA, pure-DWA
