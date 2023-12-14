@@ -1,7 +1,6 @@
 #include <despot/planner.h>
 #include "wheelchair_pomdp/wheelchair_model.h"
 #include "wheelchair_pomdp/wheelchair_gazebo.h"
-#include <fstream>
 
 using namespace despot;
 
@@ -64,7 +63,6 @@ public:
     Globals::config.max_policy_sim_len = ModelParams::max_default_policy_len;
     Globals::config.time_per_move = ModelParams::planning_time;
     Globals::config.discount = ModelParams::reward_discount;
-    Globals::config.search_depth = ModelParams::search_depth;
     //Globals::config.search_depth = 30;
     Globals::config.useGPU = false;
     if (ModelParams::enable_multithreading)
@@ -99,140 +97,92 @@ public:
     bool terminal, print_flag = true;
     OBS_TYPE obs;
     
-    if (wheelchair_world->odom_receive && wheelchair_world->joystick_receive && wheelchair_world->path_receive)
+    if (Globals::config.sim_len > 0)
     {
-      if (Globals::config.sim_len > 0)
+      for (int i = 0; i < Globals::config.sim_len;)
       {
-        for (int i = 0; i < Globals::config.sim_len;)
+        if (!wheelchair_world->zero_joystick_input)
         {
-          if (wheelchair_world->stop_wheelchair)
-          {
+          terminal = RunStep(solver, world, logger);
+          print_flag = true;
+          if (terminal)
             break;
-          }
-          if (!wheelchair_world->zero_joystick_input)
-          {
-            terminal = RunStep(solver, world, logger);
-            print_flag = true;
-            if (terminal)
-              break;
-          }
-          else
-          {
-            if (print_flag)
-            {
-              terminal = wheelchair_world->ExecuteAction(-1, obs);
-              cout << endl << "No joystick input, the system has been paused..." << endl << endl;
-              print_flag = false;
-            }
-            wheelchair_world->stuck_count = 0;
-            continue;
-          }
-          if (i == Globals::config.sim_len - 1)
-          {
-            cout << "Finished the max number of steps, stopping the wheelchair..." << endl;
-            wheelchair_world->ExecuteAction(-1, obs);
-            sleep(1);
-          }
-          i++;
         }
-      }
-      else
-      {
-        while(true)
+        else
         {
-          if (!wheelchair_world->zero_joystick_input)
+          terminal = wheelchair_world->ExecuteAction(-1, obs);
+          if (print_flag)
           {
-            terminal = RunStep(solver, world, logger);
-            print_flag = true;
-            if (terminal)
-              break;
+            cout << endl << "No joystick input, the system has been paused..." << endl << endl;
+            print_flag = false;
           }
-          else
-          {
-            terminal = wheelchair_world->ExecuteAction(-1, obs);
-            if (print_flag)
-            {
-              cout << endl << "No joystick input, the system has been paused..." << endl << endl;
-              print_flag = false;
-            }
-            continue;
-          }
+          continue;
         }
+        if (i == Globals::config.sim_len - 1)
+        {
+          cout << "Finished the max number of steps, stopping the wheelchair..." << endl;
+          wheelchair_world->ExecuteAction(-1, obs);
+          sleep(1);
+        }
+        i++;
       }
     }
     else
     {
-      cout << endl << "Topics not all received, the task is aborted..." << endl << endl;
+      while(true)
+      {
+        if (!wheelchair_world->zero_joystick_input)
+        {
+          terminal = RunStep(solver, world, logger);
+          print_flag = true;
+          if (terminal)
+            break;
+        }
+        else
+        {
+          terminal = wheelchair_world->ExecuteAction(-1, obs);
+          if (print_flag)
+          {
+            cout << endl << "No joystick input, the system has been paused..." << endl << endl;
+            print_flag = false;
+          }
+          continue;
+        }
+      }
     }
   }
 
   /*Customize the inner step of the planning pipeline by overloading the following function if necessary*/
-  bool RunStep(Solver* solver, World* world, Logger* logger)
-  {
-    GazeboWheelchairWorld *wheelchair_world = static_cast<GazeboWheelchairWorld*>(world);
-    bool wrong_planner = false;
-    logger->CheckTargetTime();
+  // bool RunStep(Solver* solver, World* world, Logger* logger)
+  // {
+  //   logger->CheckTargetTime();
 
-    double step_start_t = get_time_second();
+  //   double step_start_t = get_time_second();
 
-    double start_t = get_time_second();
-    ACT_TYPE action = -1;
-    if (wheelchair_world->planner_type == "POMDP")
-    {
-      action = solver->Search().action;
-    }
-    else if (wheelchair_world->planner_type == "POMDPX")
-    {
-      action = 6;
-    }
-    else if (wheelchair_world->planner_type == "pure-DWA")
-    {
-      action = 7;
-    }
-    else if (wheelchair_world->planner_type == "belief-DWA")
-    {
-      action = 8;
-    }
-    else
-    {
-      cout << "ERROR! WRONG PLANNER TYPE! Please check the config file!" << endl;
-      wrong_planner = true;
-      action = -1;      
-    }
-    double end_t = get_time_second();
-    double search_time = (end_t - start_t);
-    logi << "[RunStep] Time spent in " << typeid(*solver).name()
-        << "::Search(): " << search_time << endl;
+  //   double start_t = get_time_second();
+  //   ACT_TYPE action = solver->Search().action;
+  //   double end_t = get_time_second();
+  //   double search_time = (end_t - start_t);
+  //   logi << "[RunStep] Time spent in " << typeid(*solver).name()
+  //       << "::Search(): " << search_time << endl;
 
-    if (search_time < ModelParams::planning_time)
-    {
-      double sleep_time = ModelParams::planning_time - search_time;
-      sleep_time *= powf(10, 6);
-      usleep(sleep_time);
-    }
-    OBS_TYPE obs;
-    start_t = get_time_second();
-    bool terminal = world->ExecuteAction(action, obs);
-    end_t = get_time_second();
-    double execute_time = (end_t - start_t);
-    logi << "[RunStep] Time spent in ExecuteAction(): " << execute_time << endl;
+  //   OBS_TYPE obs;
+  //   start_t = get_time_second();
+  //   bool terminal = world->ExecuteAction(action, obs);
+  //   end_t = get_time_second();
+  //   double execute_time = (end_t - start_t);
+  //   logi << "[RunStep] Time spent in ExecuteAction(): " << execute_time << endl;
 
-    if(!terminal && wheelchair_world->planner_type == "POMDP")
-	  {
-      start_t = get_time_second();
-      solver->BeliefUpdate(action, obs);
-      end_t = get_time_second();
-      double update_time = (end_t - start_t);
-      logi << "[RunStep] Time spent in Update(): " << update_time << endl;
-	  }
-    if (wrong_planner)
-    {
-      terminal = true;
-    }
+  //   start_t = get_time_second();
 
-    return logger->SummarizeStep(step_++, round_, terminal, action, obs,
-        step_start_t);
-  }
+  //   solver->BeliefUpdate(action, obs);
+  //   end_t = get_time_second();
+  //   double update_time = (end_t - start_t);
+  //   logi << "[RunStep] Time spent in Update(): " << update_time << endl;
+
+  //   return logger->SummarizeStep(step_++, round_, terminal, action, obs,
+  //       step_start_t);
+  // }
 
 };
 

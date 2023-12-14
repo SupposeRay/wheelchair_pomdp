@@ -33,8 +33,6 @@ find_package(catkin REQUIRED COMPONENTS
   voronoi_msgs_and_types
 )
 
-find_package(OpenCV)
-
 #find_package (Despot CONFIG REQUIRED)
 
 # generate_messages(
@@ -94,7 +92,6 @@ target_link_libraries(${PROJECT_NAME}_wheelchair_pomdp
   ${PROJECT_NAME}
   ${catkin_LIBRARIES}
   ${Python_LIBRARIES}
-  ${OpenCV_LIBRARIES}
 )
 
 set_target_properties(

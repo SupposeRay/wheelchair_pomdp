@@ -57,12 +57,12 @@ class PlotScan
         void setHeight(double z);
 
     private:
-        bool draw_grid_ = false;
+        bool draw_grid_ = true;
         int img_w_ = 720;
         int img_h_ = 720;
         double focal_ = 450;
         double z_ = 3;
-        cv::Vec3b bg_color_ = cv::Vec3b(255,255,255);
+        cv::Vec3b bg_color_ = cv::Vec3b(0,0,0);
         cv::Vec3b color_ = cv::Vec3b(0,0,255);
         cv::Mat imgView_;
 
@@ -189,8 +189,8 @@ inline void PlotScan::cvtScanToPoints(const sensor_msgs::LaserScan::ConstPtr& sc
 inline void PlotScan::plotViewer(Eigen::Vector3d pt, cv::Vec3b color)
 {
     Eigen::Vector3d pt_ = pt;
-    int row = (int)(-pt_.x() / z_ * focal_ + img_h_/2);
-    int col = (int)(-pt_.y() / z_ * focal_ + img_w_/2);
+    int col = (int)(pt_.x() / z_ * focal_ + img_w_/2);
+    int row = (int)(-pt_.y() / z_ * focal_ + img_h_/2);
     if(col > img_w_-1 || col< 0 || row > img_h_-1 || row < 0)
         return;
 

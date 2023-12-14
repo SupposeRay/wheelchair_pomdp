@@ -1,6 +1,6 @@
 #ifndef WHEELCHAIR_MODEL_H
 #define WHEELCHAIR_MODEL_H
-#include <numeric>
+
 #include <despot/interface/pomdp.h>
 #include <despot/core/mdp.h>
 #include <despot/core/particle_belief.h>
@@ -9,9 +9,6 @@
 #include <geometry_msgs/Pose.h>
 #include <geometry_msgs/Point.h>
 #include <geometry_msgs/Twist.h>
-#include <std_msgs/Float32.h>
-#include <std_msgs/UInt32.h>
-// #include <despot/solver/despot.h>
 
 // tf2
 #include <tf2_ros/buffer.h>
@@ -24,16 +21,11 @@
 // Custom Messages
 #include <voronoi_msgs_and_types/PathList.h>
 
-// OpenCV
-#include <opencv2/core.hpp>
-#include <opencv2/highgui.hpp>
-#include <opencv2/imgproc.hpp>
-
 // shared_dwa
 
 // #include "shared_dwa/shared_DWA_node.h"
 #include "wheelchair_pomdp/param.h"
-// #include "wheelchair_pomdp/wheelchair_dmp.h"
+#include "wheelchair_pomdp/wheelchair_dmp.h"
 namespace despot
 {
 
@@ -68,15 +60,6 @@ struct GoalStruct
 	float pos_y;
 	float angle_z; //Orientation/angle
 };
-
-// struct ActionTuple
-// {
-// 	float agent_v;
-// 	float agent_w;
-// 	float joystick_x;
-// 	float joystick_y;
-// 	std::vector<geometry_msgs::Point> goal_positions;
-// };
 
 class ObservationClass
 {
@@ -126,10 +109,6 @@ public:
 		agent_pose_angle = wheelchair_.agent_pose_angle;
 		// goal_pose = state_.obj_pos;
 	}
-	void getObsFromInteger(uint64_t obs_wheelchair)
-	{
-		joystick_obs = obs_wheelchair % 100;
-	}
 };
 
 /* =============================================================================
@@ -142,26 +121,10 @@ public:
 	WheelchairStruct wheelchair;
 	GoalStruct goal_details;
 	float joystick_x, joystick_y;
-	// float pure_dwa_v, pure_dwa_w;
-	// float final_dwa_v, final_dwa_w;
 	// user's desired path index, unknow part
 	int path_idx;
-	bool adaptability;
 	// geometry_msgs::Point state_goal_point;
 	// int state_goal_index;
-	// float collision_idx;
-
-	// number of intermediate goals reached
-	int num_intermediate_goals;
-
-	// the path info to each goal
-	voronoi_msgs_and_types::PathList path2waypoint;
-
-	//The path traversed by wheelchair. Used for contaction and interpolation
-	nav_msgs::Path path_traversed;
-
-	int action_length;
-	int action_before;
 
 	WheelchairState();
 	WheelchairState(WheelchairStruct _wheelchair, int _path_idx, float _joystick_x = 0, float _joystick_y = 0);
@@ -192,7 +155,7 @@ public:
 	angular_minus: angular.z - 0.5
 	ask: ask question
 	*/
-	// static const ACT_TYPE LINEAR_PLUS, LINEAR_MINUS, ANGULAR_PLUS, ANGULAR_MINUS, KEEP, STOP, FOLLOW;
+	static const ACT_TYPE LINEAR_PLUS, LINEAR_MINUS, ANGULAR_PLUS, ANGULAR_MINUS, KEEP;
 	// enum {
 	// 	A_linear_plus = 0,
 	// 	A_linear_minus = 1,
@@ -236,36 +199,19 @@ public:
 
 	// POMDP model to store the possible goal positions
 	// vector of waypoints, vector size same as number of paths, data structure (x, y), used in CalAngleDiff (called in Step) and Update functions
-	std::vector<geometry_msgs::PoseStamped> goal_positions;
+	std::vector<geometry_msgs::PointStamped> goal_positions;
 	// previous goal positions to compare with the current, used in Update function
-	// mutable std::vector<geometry_msgs::PoseStamped> pre_positions;
+	mutable std::vector<geometry_msgs::PointStamped> pre_positions;
 	// vector of intermediate goals, a series of points, data structure (x, y), used in ReachingCheck (called in Step) and Update functions
-	mutable voronoi_msgs_and_types::PathList intermediate_goal_list;
-
-	// the proability distribution of different goals
-	std::vector<float> belief_goal;
-	// the adaptability index
-	mutable float adapt_idx;
-
-	// a deque to store the history ActionTuple to predict user adapatability
-	// mutable std::deque<ActionTuple> HRI_history;
+	voronoi_msgs_and_types::PathList intermediate_goal_list;
 
 	//DMP related variables
-	// DMP_init_variables dmp_init_variables; //Used to contain constant variables of DMP
-
+	DMP_init_variables dmp_init_variables; //Used to contain constant variables of DMP
+    
 	// the current wheelchair status obtained from the external world, used for initialization
 	WheelchairStruct current_wheelchair_status;
 	// the current lidar points obtained from the external world, a series of points, data structure (x, y), used in CollisionCheck (called in Step) 
 	std::vector<geometry_msgs::Point> lidar_points;
-
-	// the current local costmap obtained from the external world, a matrix, data type uint8_t, used in CollisionCheck (called in Step)
-	cv::Mat local_costmap;
-	// map resolution [m/cell]
-	// float map_resolution;
-	// center cell
-	int x_center = 0, y_center = 0;
-	// the yaw between wheelchair heading and the costmap pose
-	// float agent2map_yaw = 0;
 
 	// store observation in hashvalue
 	std::hash<std::string> obsHash;
@@ -279,55 +225,14 @@ public:
 
 	// float variables to store the actual joystick input from the external world
 	float external_joy_x = 0, external_joy_y = 0;
-	
-	mutable float initial_joy_x = 0, initial_joy_y = 0;
-
-	mutable float collision_index = 0;
-
-	//float variables to store dwa values
-	float pure_dwa_v, pure_dwa_w;
-	float belief_dwa_v, belief_dwa_w;
-
-	// actual executed v and w
-	float v_execution = 0, w_execution = 0;
-
-	// updated position info afer step all particles in Update function
-	// mutable float updated_position_x = 0, updated_position_y = 0;
-
-	// updated heading info afer step all particles in Update function
-	// mutable tf2::Vector3 updated_heading;
-
-	// whether to re-sort the particles_
-	mutable bool re_sort = false;
-
-	// the quaternion to represent the rotation of the costmap with respect to the wheelchair local frame
-	// mutable tf2::Quaternion map_quaternion;
-
-	// the joystick length during the search
-	mutable float initial_joystick_length = 0;
-
-	// user's instantaneous desired path
-	mutable nav_msgs::Path user_path;
-
-	// the instant goal index
-    int instant_index = 0;
-
-	// if the instant joystick input is inside collision zone
-	bool dummy_goal_collision = false;
-
-	// if the short instant joystick input is inside collision zone
-    // bool projected_cmd_collision = false;
 
 	//===================== Essential Functions =====================//
 	/* Returns total number of actions.*/
 	int NumActions() const;
 
 	/* Deterministic simulative model.*/
-	bool Step(State& state, double rand_num, ACT_TYPE action, double& reward, OBS_TYPE& obs) const;
-	
-	// bool MoveToGoalStep(State& state, double& reward, OBS_TYPE& obs, float linear_x = 0, float angular_z = 0) const;
-
-	// void MoveToGoalVel(WheelchairStruct& wheelchair_status, ACT_TYPE action, float& linear_x, float& angular_z) const;
+	bool Step(State& state, double rand_num, ACT_TYPE action, double& reward,
+		OBS_TYPE& obs) const;
 
 	/* Functions related to beliefs and starting states.*/
 	double ObsProb(OBS_TYPE obs, const State& state, ACT_TYPE action) const;
@@ -354,32 +259,22 @@ public:
 	void PrintAction(ACT_TYPE action, std::ostream& out = std::cout) const;
 
 	/* Collision check */
-	float CollisionCheck(const WheelchairStruct& wheelchair_status) const;
-
-	float M2G_CollisionCheck(const WheelchairStruct& wheelchair_status, const float& angle2turn) const;
+	float CollisionCheck(const WheelchairStruct wheelchair_status) const;
 
 	/* Reaching check */
-	float ReachingCheck(WheelchairState& wheelchair_state, bool& reaching_goal) const;
-
-	/* Reaching instant goal check */
-	float InstantGoalReachingCheck(WheelchairState& wheelchair_state, bool& reaching_goal) const;
+	int ReachingCheck(WheelchairState& wheelchair_state) const;
 
 	/* Receding penalty */
-	int RecedingPenalty(WheelchairState& wheelchair_state, tf2::Vector3& agent_heading) const;
+	int RecedingPenalty(WheelchairState& wheelchair_state) const;
 
 	/* Shared control reward */
-	float FollowUserReward(tf2::Vector3& follow_heading, float& v_after, float& w_after, float& follow_cost, int& action_depth) const;
-
-	float M2G_FollowUserReward(tf2::Vector3& joystick_heading, tf2::Vector3& final_heading) const;
+	int SharedControlReward(WheelchairState& wheelchair_state, double& random_num) const;
 
 	/* Transition function */
-	float TransitWheelchair(WheelchairState& wheelchair_state, int& transition_steps, float v_before, float v_after, float w_before, float w_after) const;
-
-	/* Transition function for Update */
-	bool TransitParticles(WheelchairState& wheelchair_state, float v_before, float v_after, float w_before, float w_after) const;
+	float TransitWheelchair(WheelchairState& wheelchair_state) const;
 
 	/* Angle between wheelchair heading and direction to the goal */
-	double CalAngleDiff(WheelchairStruct &wheelchair_status, tf2::Vector3& agent_heading, int &goal_idx, int point_idx = -1) const;
+	double CalAngleDiff(WheelchairStruct &wheelchair_status, int &goal_idx, int point_idx = -1) const;
 
 	float calRotationValue(float x_input, float y_input, geometry_msgs::Point goal_point) const;
 	float calRotationActionCost(float angle_next) const;
@@ -387,22 +282,8 @@ public:
 	/* Convert observation into Hash value */
 	void PrintObs(WheelchairObs& wheelchair_obs, std::ostream& out = std::cout) const;
 
-	void PrintParticles(const std::vector<State*> particles, std::ostream& out = std::cout) const;
-	
 	void clipBelief(std::vector<despot::State *>& particles_vector) const;
 	void normalize(std::vector<despot::State *>& particles_vector) const;
-	void clipBelief(std::vector<float>& belief_vector) const;
-	void normalize(std::vector<float>& belief_vector) const;
-
-	// path contraction
-	void ContractAndInterpolatePath(WheelchairStruct &wheelchair_status, nav_msgs::Path &path_traversed, nav_msgs::Path &original_path) const;
-
-	// path interpolation
-	void GenerateNewPath(WheelchairStruct &wheelchair_status, nav_msgs::Path &original_path) const;
-
-	int TurningSteps(float& angle2turn, float& current_w, float& angular_vel, float time_span) const;
-
-	float FollowingVel(tf2::Vector3 joystick_heading, float v_before, float w_before, float& v_follow, float& w_follow, float v_max, float time_span) const;
 
 	//======================Functions for hyp-despot====================================
 	int NumObservations() const

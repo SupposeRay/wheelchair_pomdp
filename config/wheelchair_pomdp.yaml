@@ -1,0 +1,29 @@
+num_particles: 25
+# the number of particles to run DESPOT
+
+planning_step: 500
+# the number of steps to simulate in DESPOT
+
+max_default_policy_len: 5
+# the number of steps to simulate the default policy
+
+planning_time: 0.1
+# the time for searching and planning per step
+
+enable_multithreading: true
+# whether to use multiple threaded CPU
+
+num_thread: 10
+# the number of threads to run per CPU
+
+verbosity_lvl: 3
+# the level of verbosity for log file
+
+transition_time: 0.3
+# the rollout time per step during tree search
+
+file_directory: "/home/ray/DESPOT-LOG/log60.txt"
+# the full path to store log files
+
+waypoint_dist: 2.0
+# the distance away from the agent along a path that a waypoint is selected

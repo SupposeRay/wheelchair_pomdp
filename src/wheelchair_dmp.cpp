@@ -326,3 +326,4 @@ void DMP_variables::Copy_from_PyObject(PyObject* dmp_pyobject, int n_dmps, int n
     */
 
 }
+

@@ -30,7 +30,6 @@ static Dvc_PedPomdpDoNothingPolicy* do_nothing_lowerbound=NULL;
 static Dvc_3DCOORD* tempLidarPoints=NULL;
 static Dvc_COORD* tempGoalPositions= NULL;
 static Dvc_Path* tempIntermediateGoalList=NULL;
-static int* tempLocalCostMap= NULL;
 // static float tempExternalJoystick_x = 0;
 // static float tempExternalJoystick_y = 0;
 
@@ -39,7 +38,6 @@ static int* tempLocalCostMap= NULL;
 void UpdateGPULidarPoints(DSPOMDP* Hst_model);
 void UpdateGPUExternalJoystick(DSPOMDP* Hst_model);
 void UpdateGPUGoalPositionsAndIntermediateGoalList(DSPOMDP* Hst_model);
-void UpdateGPULocalCostmap(DSPOMDP* Hst_model);
 void UpdateGPUAfterExcecuteAction(DSPOMDP* Hst_model);  
 
 __global__ void PassPedPomdpFunctionPointers(Dvc_WheelchairPomdp* model)
@@ -62,7 +60,6 @@ __global__ void PassPedPomdpParams(	//double _in_front_angle_cos,
 		bool _using_probabilistic_model,
 		float _noise_amplitude,
 		float _backing_ratio,
-		float _max_linear_speed,
 		float _max_angular_speed,
 		int _excess_speed_penalty,
 		int _step_penalty,
@@ -72,21 +69,6 @@ __global__ void PassPedPomdpParams(	//double _in_front_angle_cos,
 		int _inflation_basic_penalty,
 		int _reaching_reward,
 		int _inter_goal_reward,
-		float _step_size,
-		float _max_v_acceleration,
-		float _max_w_acceleration,
-		float _weight_heading,
-		float _weight_velocity,
-		float _response_time,
-		float _outer_pixel_thres,					
-	    float _inner_pixel_thres,
-		float _pixel_path,
-		int _inflation_max_penalty,
-		float _reward_discount,
-		int _num_simulation_m2g,
-		int _num_normal_actions,
-		float _facing_angle,
-
 		//Dvc_3DCOORD* _lidar_points,
 		int _lidar_points_size,
 		//Dvc_COORD* _goals, 
@@ -120,7 +102,7 @@ __global__ void PassPedPomdpParams(	//double _in_front_angle_cos,
 	//Declared in GPU_wheelchair_model.h
 	//in_front_angle_cos=_in_front_angle_cos;
 	freq=_freq;
-	Dvc_ModelParams::transition_time = _transition_time;
+	transition_time = _transition_time;
 	//goals=_goals;
 	//if(path == NULL) path=new Dvc_Path();
 	//lidar_points = _lidar_points;
@@ -128,7 +110,6 @@ __global__ void PassPedPomdpParams(	//double _in_front_angle_cos,
 	Dvc_ModelParams::noise_amplitude = _noise_amplitude;
 	Dvc_ModelParams::backing_ratio = _backing_ratio;
 	Dvc_ModelParams::max_angular_speed = _max_angular_speed;
-	Dvc_ModelParams::max_linear_speed = _max_linear_speed;
 	Dvc_ModelParams::excess_speed_penalty = _excess_speed_penalty;
 	Dvc_ModelParams::step_penalty = _step_penalty;
 	Dvc_ModelParams::stationary_penalty = _stationary_penalty;
@@ -137,21 +118,6 @@ __global__ void PassPedPomdpParams(	//double _in_front_angle_cos,
 	Dvc_ModelParams::inflation_basic_penalty = _inflation_basic_penalty;
 	Dvc_ModelParams::reaching_reward = _reaching_reward;
 	Dvc_ModelParams::inter_goal_reward = _inter_goal_reward;
-	Dvc_ModelParams::step_size = _step_size;
-	Dvc_ModelParams::max_v_acceleration = _max_v_acceleration;
-	Dvc_ModelParams::max_w_acceleration = _max_w_acceleration;
-	Dvc_ModelParams::weight_velocity = _weight_velocity;
-	Dvc_ModelParams::weight_heading = _weight_heading;
-	Dvc_ModelParams::repsonse_time = _response_time;
-	Dvc_ModelParams::outer_pixel_thres = _outer_pixel_thres;
-	Dvc_ModelParams::inner_pixel_thres = _inner_pixel_thres;
-	Dvc_ModelParams::pixel_path = _pixel_path;
-	Dvc_ModelParams::inflation_max_penalty = _inflation_max_penalty;
-	Dvc_ModelParams::reward_discount = _reward_discount;
-	Dvc_ModelParams::num_simulation_m2g = _num_simulation_m2g;
-	Dvc_ModelParams::num_normal_actions = _num_normal_actions;
-	Dvc_ModelParams::facing_angle = _facing_angle;
-
 	Dvc_ModelParams::LIDAR_POINTS_SIZE = _lidar_points_size;
 	Dvc_ModelParams::GOAL_TRAVELLED =  GOAL_TRAVELLED ;
 	Dvc_ModelParams::N_PED_IN = N_PED_IN  ;
@@ -179,7 +145,7 @@ __global__ void PassPedPomdpParams(	//double _in_front_angle_cos,
 	
 	printf("Pass model to gpu\n");
 	printf("Control frequency in GPU = %.3fHz\n", freq);
-	printf("Transition time in GPU = %.3fs\n", Dvc_ModelParams::transition_time);
+	printf("Transition time in GPU = %.3fs\n", transition_time);
 
 }
 
@@ -232,11 +198,10 @@ void WheelchairDSPOMDP::InitGPUModel(){
 		//Hst->world_model->in_front_angle_cos, Hst->world_model->freq, tempGoals, tempPath,
 		//Hst->world_model->path.size(),
 		control_freq,
-		ModelParams::transition_time,
+		Hst->transition_time,
 		ModelParams::using_probabilistic_model,
 		ModelParams::noise_amplitude,
 		ModelParams::backing_ratio,
-		ModelParams::max_linear_speed,
 		ModelParams::max_angular_speed,
 		ModelParams::excess_speed_penalty,
 		ModelParams::step_penalty,
@@ -246,21 +211,6 @@ void WheelchairDSPOMDP::InitGPUModel(){
 		ModelParams::inflation_basic_penalty,
 		ModelParams::reaching_reward,
 		ModelParams::inter_goal_reward,
-		ModelParams::step_size,
-		ModelParams::max_v_acceleration,
-		ModelParams::max_w_acceleration,
-		ModelParams::weight_heading,
-		ModelParams::weight_velocity,
-		ModelParams::repsonse_time,
-		ModelParams::outer_pixel_thres,
-		ModelParams::inner_pixel_thres,
-		ModelParams::pixel_path,
-		ModelParams::inflation_max_penalty,
-		ModelParams::reward_discount,
-		ModelParams::num_simulation_m2g,
-		ModelParams::num_normal_actions,
-		ModelParams::facing_angle,
-		
 		//tempLidarPoints,
 		lidar_points_size,
 		goal_positions_size,
@@ -289,25 +239,24 @@ void WheelchairDSPOMDP::InitGPUModel(){
 		ModelParams::USE_ZERO_VEL_CORRECTION);
 	
 	HANDLE_ERROR(cudaDeviceSynchronize());
-	// cout << "Transition time " << transition_time << "s." << endl;
-	// cout << "Control frequency control_freq " << control_freq << "Hz." << endl;
+	cout << "Transition time " << transition_time << "s." << endl;
+	cout << "Control frequency control_freq " << control_freq << "Hz." << endl;
 	//UpdateGPUGoals(Hst);
 	//UpdateGPUPath(Hst);
-	// UpdateGPULidarPoints(Hst);
-	// UpdateGPUGoalPositionsAndIntermediateGoalList(Hst); 
-	// UpdateGPUExternalJoystick(Hst); 
-	// UpdateGPULocalCostmap(Hst);
-	UpdateGPUAfterExcecuteAction(Hst);  
+	UpdateGPULidarPoints(Hst);
+	UpdateGPUGoalPositionsAndIntermediateGoalList(Hst); 
+	UpdateGPUExternalJoystick(Hst); 
+	// UpdateGPUAfterExcecuteAction(Hst);  
 	HANDLE_ERROR(cudaDeviceSynchronize());
 
 }
 
 void WheelchairDSPOMDP::UpdateGPUModel(){
 	WheelchairDSPOMDP* Hst =static_cast<WheelchairDSPOMDP*>(this);
-	// UpdateGPULidarPoints(Hst);
-	// UpdateGPUGoalPositionsAndIntermediateGoalList(Hst);
-	// UpdateGPUExternalJoystick(Hst);
-	UpdateGPUAfterExcecuteAction(Hst);    
+	UpdateGPULidarPoints(Hst);
+	UpdateGPUGoalPositionsAndIntermediateGoalList(Hst);
+	UpdateGPUExternalJoystick(Hst);
+	// UpdateGPUAfterExcecuteAction(Hst);    
 	HANDLE_ERROR(cudaDeviceSynchronize());
 }
 
@@ -442,23 +391,9 @@ __global__ void UpdateExternalJoystickKernel(float _external_joy_x, float _exter
 	external_joy_y = _external_joy_y;
 }
 
-__global__ void UpdateLocalCostmapKernel(int* tempLocalCostMap, int _local_costmap_rows, int _local_costmap_cols)
-{
-	local_costmap_cols = _local_costmap_cols;
-	local_costmap_rows = _local_costmap_rows;
-	local_costmap_data = tempLocalCostMap;
-	// map_resolution = _map_resolution;
-	x_center = local_costmap_cols % 2 == 0 ? (local_costmap_cols / 2) - 1 : (local_costmap_cols - 1) / 2;
-    y_center = local_costmap_rows % 2 == 0 ? (local_costmap_rows / 2) - 1 : (local_costmap_rows - 1) / 2;
-
-
-
-}
-
 __global__ void UpdateAfterExecuteAction(Dvc_3DCOORD* _lidar_points, int _lidar_points_size,
 Dvc_COORD* _goal_positions, Dvc_Path* _temp_intermediate_goal_list, int _num_path_size,
-float _external_joy_x, float _external_joy_y,
-int* _tempLocalCostMap, int _local_costmap_rows, int _local_costmap_cols)
+float _external_joy_x, float _external_joy_y)
 {
 	Dvc_ModelParams::LIDAR_POINTS_SIZE = _lidar_points_size;
 	lidar_points=_lidar_points;
@@ -469,19 +404,6 @@ int* _tempLocalCostMap, int _local_costmap_rows, int _local_costmap_cols)
 
 	external_joy_x = _external_joy_x;
 	external_joy_y = _external_joy_y;
-
-	// agent2map_yaw = _agent2map_yaw;
-
-	local_costmap_cols = _local_costmap_cols;
-	local_costmap_rows = _local_costmap_rows;
-	local_costmap_data = _tempLocalCostMap;
-	// map_resolution = _map_resolution;
-
-	x_center = local_costmap_cols % 2 == 0 ? (local_costmap_cols / 2) - 1 : (local_costmap_cols - 1) / 2;
-    y_center = local_costmap_rows % 2 == 0 ? (local_costmap_rows / 2) - 1 : (local_costmap_rows - 1) / 2;
-
-
-
 }
 /*void UpdateGPUGoals(DSPOMDP* Hst_model)
 {
@@ -587,8 +509,8 @@ void UpdateGPUAfterExcecuteAction(DSPOMDP* Hst_model)
 			tf2::Quaternion goal_quat;
 			for(int i=0;i<goal_positions_size;i++){
 
-				tempGoalPositions[i].x = Hst->goal_positions[i].pose.position.x;
-				tempGoalPositions[i].y = Hst->goal_positions[i].pose.position.y;
+				tempGoalPositions[i].x = Hst->goal_positions[i].point.x;
+				tempGoalPositions[i].y = Hst->goal_positions[i].point.y;
 
 				path_size = Hst->intermediate_goal_list.paths[i].poses.size();
 				tempIntermediateGoalList[i].size_ = path_size;
@@ -614,33 +536,9 @@ void UpdateGPUAfterExcecuteAction(DSPOMDP* Hst_model)
 		cout << "Joystick input: x = " << Hst->external_joy_x << ", y = " << Hst->external_joy_y << endl;
 		//UpdateExternalJoystickKernel<<<1,1,1>>>(temp_external_joy);
 		//HANDLE_ERROR(cudaDeviceSynchronize());
-
-		if(tempLocalCostMap)HANDLE_ERROR(cudaFree(tempLocalCostMap));
-
-		cout << __FUNCTION__ << "@" << __LINE__ << endl;
-		cout << "local cost map rows,  cols: " << Hst->local_costmap.rows << " " <<  Hst->local_costmap.cols << endl;
-		int local_costmap_rows = Hst->local_costmap.rows;
-		int local_costmap_cols = Hst->local_costmap.cols;
-		int local_costmap_size = local_costmap_rows*local_costmap_cols;
-		if(local_costmap_size > 0)
-		{
-			HANDLE_ERROR(cudaMallocManaged((void**)&tempLocalCostMap,  local_costmap_size*sizeof(int)));
-
-
-			//tempLocalCostMap = Hst->local_costmap.data();
-			//int*local_costmap_data_  = &Hst->local_costmap.at<int>(0);
-			int* local_costmap_data_ = (int*)(Hst->local_costmap.data);
-			for(int i=0;i<local_costmap_size;i++){
-				tempLocalCostMap[i] = local_costmap_data_[i];
-			}
-			UpdateLocalCostmapKernel<<<1,1,1>>>(tempLocalCostMap, local_costmap_rows, local_costmap_cols);
-
-		}
-		
 		
 		UpdateAfterExecuteAction<<<1,1,1>>>(tempLidarPoints, Hst->lidar_points.size(), tempGoalPositions, tempIntermediateGoalList, 
-		goal_positions_size, Hst->external_joy_x, Hst->external_joy_y, 
-		tempLocalCostMap, local_costmap_rows, local_costmap_cols);
+		goal_positions_size, Hst->external_joy_x, Hst->external_joy_y);
 		HANDLE_ERROR(cudaDeviceSynchronize());
 	}
 }
@@ -721,8 +619,8 @@ void UpdateGPUGoalPositionsAndIntermediateGoalList(DSPOMDP* Hst_model)
 			tf2::Quaternion goal_quat;
 			for(int i=0;i<goal_positions_size;i++){
 
-				tempGoalPositions[i].x = Hst->goal_positions[i].pose.position.x;
-				tempGoalPositions[i].y = Hst->goal_positions[i].pose.position.y;
+				tempGoalPositions[i].x = Hst->goal_positions[i].point.x;
+				tempGoalPositions[i].y = Hst->goal_positions[i].point.y;
 
 				path_size = Hst->intermediate_goal_list.paths[i].poses.size();
 				tempIntermediateGoalList[i].size_ = path_size;
@@ -739,35 +637,6 @@ void UpdateGPUGoalPositionsAndIntermediateGoalList(DSPOMDP* Hst_model)
 				
 			}
 			UpdateGoalPositionsAndIntermediateGoalListKernel<<<1,1,1>>>(tempGoalPositions, tempIntermediateGoalList, goal_positions_size);
-			HANDLE_ERROR(cudaDeviceSynchronize());
-		}
-	}
-
-}
-
-void UpdateGPULocalCostmap(DSPOMDP* Hst_model)
-{
-	if(Globals::config.useGPU){
-		WheelchairDSPOMDP* Hst =static_cast<WheelchairDSPOMDP*>(Hst_model);
-		if(tempLocalCostMap)HANDLE_ERROR(cudaFree(tempLocalCostMap));
-
-		cout << __FUNCTION__ << "@" << __LINE__ << endl;
-		cout << "local cost map rows,  cols: " << Hst->local_costmap.rows << " " <<  Hst->local_costmap.cols << endl;
-		int local_costmap_rows = Hst->local_costmap.rows;
-		int local_costmap_cols = Hst->local_costmap.cols;
-		int local_costmap_size = local_costmap_rows*local_costmap_cols;
-		if(local_costmap_size > 0)
-		{
-			HANDLE_ERROR(cudaMallocManaged((void**)&tempLocalCostMap,  local_costmap_size*sizeof(int)));
-
-
-			//tempLocalCostMap = Hst->local_costmap.data();
-			//int*local_costmap_data_  = &Hst->local_costmap.at<int>(0);
-			int* local_costmap_data_ = (int*)Hst->local_costmap.data;
-			for(int i=0;i<local_costmap_size;i++){
-				tempLocalCostMap[i] = local_costmap_data_[i];
-			}
-			UpdateLocalCostmapKernel<<<1,1,1>>>(tempLocalCostMap, local_costmap_rows, local_costmap_cols);
 			HANDLE_ERROR(cudaDeviceSynchronize());
 		}
 	}

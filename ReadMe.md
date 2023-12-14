@@ -11,72 +11,92 @@ Assuming both the packages are in the same folder, symlink with name wheelchair_
 
 
 Then compile the package from catkin workspace using command:
+```
+catkin build hyp_despot
 
-  `catkin build hyp_despot`
+```
 
 Then package can be run with the command:
+```
 
-  `rosrun hyp_despot hyp_despot_wheelchair_pomdp <additional arguments>`
+rosrun hyp_despot hyp_despot_wheelchair_pomdp <additional arguments>
 
+```
 ## To test the hyp_despot_wheelchair_pomdp in the simulation environment
 
-First, clone [wheelchair_pomdp repo](https://github.com/ntu-rris/wheelchair_pomdp/tree/dummy_path), [scwheelchair-simulation repo](https://github.com/ntu-rris/scwheelchair-simulation/tree/demo_branch), and [scat_autonomous_packages repo](https://github.com/ntu-rris/scat_autonomous_packages/tree/wheelchair_pomdp) to your workspace and compile them under different branches repsectively.
+First, clone [wheelchair_pomdp repo](https://github.com/ntu-rris/wheelchair_pomdp/tree/intermediate_goals), [scwheelchair-simulation repo](https://github.com/ntu-rris/scwheelchair-simulation/tree/w_goal_recalculation), and [scat_autonomous_packages repo](https://github.com/ntu-rris/scat_autonomous_packages/tree/wheelchair_pomdp) to your workspace and compile them under different branches repsectively.
 
-> wheelchair_pomdp repo: **dummy_path branch**
-> scwheelchair-simulation repo: **demo_branch branch**
+> wheelchair_pomdp repo: **intermediate_goals branch**
+> scwheelchair-simulation repo: **w_goal_recalculation branch**
 > scat_autonomous_packages repo: **wheelchair_pomdp branch**
 
 1. Run Gazebo simulation environment (in scwheelchair-simulation repo)
 
-   `roslaunch mbot_gazebo view_nuric_gazebo_pomdp_test.launch`
+    `roslaunch mbot_gazebo view_nuric_gazebo_pomdp_test.launch`
 
 2. Run the Rviz visualization script (in scwheelchair-simulation repo)
 
-   `roslaunch mbot_navigation navigation_pomdp.launch`
+    `roslaunch mbot_navigation navigation_pomdp.launch`
 
 3. Run the Voronoi path planner (in scat_autonomous_packages repo)
 
-   `roslaunch scat_move_base move_base.launch`
+    `roslaunch scat_move_base move_base.launch`
 
 4. Pin a point on the map to set the destination by clicking the "2D Nav Goal" in Rviz
 
 5. Select the control method: joystick or keyboard
 
-   * Joystick: plug the cable connected to the arudino joystick into the USB port and run the arduino joystick script (in scwheelchair-simulation repo)
+* Joystick: plug the cable connected to the arudino joystick into the USB port and run the arduino joystick (in scwheelchair-simulation repo)
 
-   `sudo chmod 666 /dev/ttyUSB0`
-
-   `rosrun rosserial_python serial_node.py /dev/ttyUSB0`
-
-   * Keyboard: run the keyboard control command in a detached terminal (in scwheelchair-simulation repo)
-
-   `roslaunch control_keyboard control_keyboard.launch`
-
-6. Run the shared_dwa code
-
-   `roslaunch shared_dwa shared_dwa.launch`
-
-7. Run the hyp_despot_wheelchair_pomdp code
-
-   * Run in single-threaded CPU mode
-
-   `rosrun hyp_despot hyp_despot_wheelchair_pomdp -n 40 --max-policy-simlen 5 -s 800 -t 0.3 --CPU 0`
-
-   * Run in multi-threaded CPU mode
-
-   `rosrun hyp_despot hyp_despot_wheelchair_pomdp -n 40 --max-policy-simlen 5 -s 800 -t 0.3 --CPU 1 --num_thread 20`
-
-   * Run in multi-threaded GPU mode
-
-   `rosrun hyp_despot hyp_despot_wheelchair_pomdp -n 1000 --max-policy-simlen 5 -s 800 -t 0.3 --CPU 1 --num_thread 20 --GPU 1 --GPUID 0`
-
-8. To manually control the agent, run in terminal
+  Change [line 49 in wheelchair_gazebo.cpp](https://github.com/ntu-rris/wheelchair_pomdp/blob/intermediate_goals/src/wheelchair_gazebo.cpp#L49) to 
   
-   `roslaunch input_converter input_converter.launch`
-  
-   Then use the joystick or the detached terminal in Step 5 to control the agent
+  `joystick_subscriber_ = node_handle_->subscribe("/arduino/joystick", 1, &GazeboWheelchairWorld::joystickCallback, this);`
 
-9. To test the shared-DWA inside the POMDP framework, change [line 1 in the config file](https://github.com/ntu-rris/wheelchair_pomdp/blob/dummy_path/config/wheelchair_pomdp.txt) from "POMDP" to "belief-DWA" or "pure-DWA" to test the goal-based shared-DWA or pure shared-DWA respectively and re-run the command line in Step 7
+  Then re-build the repo and run
+
+  `sudo chmod 666 /dev/ttyUSB0`
+
+  `rosrun rosserial_python serial_node.py /dev/ttyUSB0`
+
+* Keyboard: run the keyboard control command in a detached terminal (in scwheelchair-simulation repo)
+
+  Change [line 49 in wheelchair_gazebo.cpp](https://github.com/ntu-rris/wheelchair_pomdp/blob/intermediate_goals/src/wheelchair_gazebo.cpp#L49) to 
+  
+  `joystick_subscriber_ = node_handle_->subscribe("/keyboard", 1, &GazeboWheelchairWorld::joystickCallback, this);`
+
+  Then re-build the repo and run
+
+  `roslaunch control_keyboard control_keyboard.launch`
+
+6. Run the hyp_despot_wheelchair_pomdp code
+
+* Run in multi-threaded CPU mode
+
+  `rosrun hyp_despot hyp_despot_wheelchair_pomdp -n 100 --max-policy-simlen 5 -s 800 -t 0.15 --CPU 1 --num_thread 20`
+
+* Run in multi-threaded GPU mode
+
+  `rosrun hyp_despot hyp_despot_wheelchair_pomdp -n 100 --max-policy-simlen 5 -s 800 -t 0.15 --CPU 1 --num_thread 20 --GPU 1 --GPUID 0`
+
+7. To manually control the agent:
+
+* Joystick:
+  
+  Change [line 5 in input_converter_config.yaml](https://github.com/ntu-rris/scwheelchair-simulation/blob/w_goal_recalculation/input_converter/config/input_converter_config.yaml#L5) to 
+  
+  `input_source: "Joystick"`
+
+* Keyboard:
+  
+  Change [line 5 in input_converter_config.yaml](https://github.com/ntu-rris/scwheelchair-simulation/blob/w_goal_recalculation/input_converter/config/input_converter_config.yaml#L5) to 
+  
+  `input_source: "Keyboard"`
+
+  Run in terminal 
+
+  `roslaunch input_converter input_converter.launch`
+
+  Then use the joystick or the detached terminal in Step 5 to control the agent
 
 
 
@@ -117,6 +137,18 @@ First, clone [wheelchair_pomdp repo](https://github.com/ntu-rris/wheelchair_pomd
 6. Control the agent
 
     Comment line 7 and uncomment line 8 in [input_converter.launch](https://github.com/ntu-rris/scwheelchair-simulation/blob/w_goal_recalculation/input_converter/launch/input_converter.launch#L7)
+
+* Joystick:
+  
+  Change [line 5 in input_converter_config.yaml](https://github.com/ntu-rris/scwheelchair-simulation/blob/w_goal_recalculation/input_converter/config/input_converter_config.yaml#L5) to 
+  
+  `input_source: "Joystick"`
+
+* Keyboard:
+  
+  Change [line 5 in input_converter_config.yaml](https://github.com/ntu-rris/scwheelchair-simulation/blob/w_goal_recalculation/input_converter/config/input_converter_config.yaml#L5) to 
+  
+  `input_source: "Keyboard"`
 
   Run in terminal 
 

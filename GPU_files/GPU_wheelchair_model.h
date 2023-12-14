@@ -9,8 +9,6 @@
 #include "GPU_param.h"
 #include "wheelchair_pomdp/wheelchair_model.h"
 #include "GPU_Path.h"
-
-#include <eigen3/Eigen/Geometry>
 using namespace despot;
 
 /* =============================================================================
@@ -106,33 +104,14 @@ struct Dvc_GoalStruct { //Equivalent to WheelchairStruct in CPU model
 	
 };
 
-struct Dvc_PathStruct {
-
-	Dvc_3DCOORD poses[50];
-	int size;
-
-};
-
 //class WheelchairState;
 class Dvc_PomdpState: public Dvc_State { //Equivalent to WheelchairState in CPU model
 public:
 	Dvc_WheelchairStruct wheelchair;
 	Dvc_GoalStruct goal;  //Not needed if we have path_idx
-	float joystick_x, joystick_y;
 	int path_idx; //Used to get the intermediate waypoints for a given goal
 	int num; //Used as number of peds. Set to 0. Not used in our current code.
-	Dvc_PathStruct path_traversed; // the path traversed before contraction and interpolation
-	Dvc_PathStruct contracted_path; // variable to store contracted path. Not copied from CPU particles
 	Dvc_PedStruct* peds/*[Dvc_ModelParams::N_PED_IN]*/;
-	//Dvc_Path* intermediate_goal_list;
-
-	bool adaptability;
-	// geometry_msgs::Point state_goal_point;
-	// int state_goal_index;
-	// float collision_idx;
-
-	// number of intermediate goals reached
-	int num_intermediate_goals;
 
 	DEVICE Dvc_PomdpState();
 
@@ -152,9 +131,6 @@ public:
 		if (this != &other) { // self-assignment check expected
 			// storage can be reused
 			num = other.num;
-			path_idx = other.path_idx;
-			joystick_x = other.joystick_x;
-			joystick_y = other.joystick_y;
 
 			goal.pos_x = other.goal.pos_x;
 			goal.pos_y = other.goal.pos_y;
@@ -167,15 +143,6 @@ public:
 			wheelchair.angle_z = other.wheelchair.angle_z;
 			wheelchair.vel_v = other.wheelchair.vel_v;
 			wheelchair.vel_w = other.wheelchair.vel_w;
-
-			path_traversed = other.path_traversed; 
-	        contracted_path = other.contracted_path;
-
-			adaptability = other.adaptability;
-
-			// collision_idx = other.collision_idx;
-
-			num_intermediate_goals = other.num_intermediate_goals;
 			
 
 			for (int i = 0; i < num; i++)
@@ -256,34 +223,17 @@ public:
 
 	DEVICE static float Dvc_GetMaxReward() {return Dvc_ModelParams::GOAL_REWARD;};
 
-	DEVICE static int Dvc_ReachingCheck(Dvc_PomdpState& wheelchair_state, bool& reaching_goal) ;
+	DEVICE static int Dvc_ReachingCheck(const Dvc_PomdpState& wheelchair_state) ;
 
-	DEVICE static float Dvc_CollisionCheck(const Dvc_WheelchairStruct& wheelchair_status, const Eigen::Quaternionf& map_quat) ;
+	DEVICE static float Dvc_CollisionCheck(const Dvc_WheelchairStruct& wheelchair_status) ;
 
-	DEVICE static float Dvc_TransitWheelchair(Dvc_PomdpState& wheelchair_state, Eigen::Quaternionf & map_quat, int& transition_steps, float v_before, float v_after, float w_before, float w_after) ;
-
-	DEVICE static float Dvc_FollowingVel(Eigen::Vector3f joystick_heading, float v_before, float w_before, float& v_follow, float& w_follow, float v_max);
-
-	// path interpolation
-	DEVICE static void Dvc_GenerateNewPath(Dvc_WheelchairStruct &wheelchair_status, Dvc_PathStruct &original_path) ;
-	
-	DEVICE static int Dvc_TurningSteps(float& angle2turn, float& current_w, int& case_num) ;
-
-	// path contraction
-	DEVICE static void Dvc_ContractAndInterpolatePath(Dvc_WheelchairStruct &wheelchair_status, Dvc_PathStruct &path_traversed, Dvc_PathStruct &new_path, int path_index);
-
-	/* Shared control reward */
-	DEVICE static float Dvc_FollowUserReward(float v_follow, float w_follow, float v_after, float w_after) ;
-
+	DEVICE static float Dvc_TransitWheelchair(Dvc_WheelchairStruct& wheelchair_status) ;
 	
 	/* Angle between wheelchair heading and direction to the goal */
 	DEVICE static float Dvc_CalAngleDiff(const Dvc_WheelchairStruct& wheelchair_status, int &goal_idx);
 
 	DEVICE static void Dvc_PrintObs(Dvc_WheelchairObs& wheelchair_obs, long& obs_int) ;
 	DEVICE static void Dvc_PrintDvcState(Dvc_State* particle);
-	
-	DEVICE static int Dvc_GetLocalCostmapIndexValue(int i, int j);
-	
 	enum {
 		LINEAR_PLUS, LINEAR_MINUS, ANGULAR_PLUS, ANGULAR_MINUS, KEEP
 	};
@@ -306,13 +256,6 @@ DEVICE extern Dvc_COORD* goal_positions;
 DEVICE extern Dvc_Path* intermediate_goal_list;
 DEVICE extern float external_joy_x;
 DEVICE extern float external_joy_y;
-// DEVICE extern float agent2map_yaw;
-// DEVICE extern float map_resolution;
-DEVICE extern int* local_costmap_data;
-DEVICE extern int local_costmap_rows;
-DEVICE extern int local_costmap_cols;
-DEVICE extern int x_center;
-DEVICE extern int y_center;
 
 
 //DEVICE extern std::vector<long> ObsMap;
